@@ -20,3 +20,39 @@ alter table trades enable row level security;
 
 -- Allow all operations for now (single-user app)
 create policy "Allow all" on trades for all using (true) with check (true);
+
+-- Dynamic watchlist (up to 100 tickers)
+create table if not exists watchlist (
+  id uuid primary key default gen_random_uuid(),
+  ticker text not null unique,
+  name text not null,
+  strategy text not null default 'momentum',
+  created_at timestamptz default now()
+);
+
+alter table watchlist enable row level security;
+create policy "Allow all" on watchlist for all using (true) with check (true);
+
+-- Seed with default 20 tickers
+insert into watchlist (ticker, name, strategy) values
+  ('META',  'Meta Platforms',    'momentum'),
+  ('GOOGL', 'Alphabet',          'momentum'),
+  ('NVDA',  'NVIDIA',            'momentum'),
+  ('ARM',   'ARM Holdings',      'momentum'),
+  ('APP',   'AppLovin',          'momentum'),
+  ('FTNT',  'Fortinet',          'momentum'),
+  ('PANW',  'Palo Alto Networks','momentum'),
+  ('MU',    'Micron Technology', 'momentum'),
+  ('RKLB',  'Rocket Lab',        'momentum'),
+  ('ASTS',  'AST SpaceMobile',   'momentum'),
+  ('LUNR',  'Intuitive Machines','momentum'),
+  ('USO',   'US Oil Fund ETF',   'momentum'),
+  ('XOM',   'ExxonMobil',        'momentum'),
+  ('FANG',  'Diamondback Energy','momentum'),
+  ('RTX',   'RTX Corporation',   'momentum'),
+  ('NLR',   'Nuclear Energy ETF','etf_rotation'),
+  ('IREN',  'Iris Energy',       'momentum'),
+  ('NBIS',  'Nebius Group',      'momentum'),
+  ('SPY',   'S&P 500 ETF',       'etf_rotation'),
+  ('QQQ',   'Nasdaq 100 ETF',    'etf_rotation')
+on conflict (ticker) do nothing;

@@ -1,21 +1,25 @@
 import { NextResponse } from "next/server";
-import { WATCHLIST } from "@/lib/watchlist";
+import { getWatchlist } from "@/lib/supabase";
 import { getQuote, getHistorical } from "@/lib/yahoo";
 import { buildSignal } from "@/lib/signals";
+import { getSAData, daysUntilEarnings } from "@/lib/seeking-alpha";
 
-export const revalidate = 900; // cache for 15 min (Yahoo Finance delay)
+export const revalidate = 300; // cache 5 min
 
 export async function GET() {
+  const watchlist = await getWatchlist();
+
   const results = await Promise.all(
-    WATCHLIST.map(async ({ ticker, strategy }) => {
-      const [quote, bars] = await Promise.all([
+    watchlist.map(async ({ ticker, strategy }) => {
+      const [quote, bars, sa] = await Promise.all([
         getQuote(ticker),
         getHistorical(ticker, 60),
+        getSAData(ticker),
       ]);
-
       if (!quote || bars.length === 0) return null;
 
       const signal = buildSignal(ticker, strategy, bars, quote.high52w);
+      const earningsDays = daysUntilEarnings(sa.earningsDate);
 
       return {
         ...signal,
@@ -24,21 +28,21 @@ export async function GET() {
         changePct: quote.changePct,
         volume: quote.volume,
         avgVolume: quote.avgVolume,
+        sa: {
+          quantRating: sa.quantRating,
+          analystRating: sa.analystRating,
+          earningsDays,  // days until next earnings (null if unknown)
+        },
       };
     })
   );
 
-  const signals = results
-    .filter(Boolean)
-    .sort((a, b) => b!.score - a!.score);
+  const signals = results.filter(Boolean).sort((a, b) => b!.score - a!.score);
 
-  // Market condition: based on SPY position vs its 20-day MA
   const spySignal = signals.find((s) => s?.ticker === "SPY");
   const marketCondition = spySignal
-    ? spySignal.indicators.isAboveMa20
-      ? "bull"
-      : "bear"
+    ? spySignal.indicators.isAboveMa20 ? "bull" : "bear"
     : "neutral";
 
-  return NextResponse.json({ signals, marketCondition });
+  return NextResponse.json({ signals, marketCondition, updatedAt: new Date().toISOString() });
 }
