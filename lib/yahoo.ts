@@ -25,6 +25,26 @@ export interface HistoricalBar {
   volume: number;
 }
 
+export interface IntradayBar {
+  time: number; // Unix seconds, shifted to ET so lightweight-charts displays correctly
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+/** Returns Unix seconds offset so that UTC display == Eastern Time display */
+function toETSeconds(date: Date): number {
+  const utcMs = date.getTime();
+  const m = date.getUTCMonth() + 1;
+  const d = date.getUTCDate();
+  // DST: second Sunday in March → first Sunday in November (approximation)
+  const isDST = (m > 3 && m < 11) || (m === 3 && d >= 8) || (m === 11 && d <= 7);
+  const offsetMs = isDST ? 4 * 3_600_000 : 5 * 3_600_000;
+  return Math.floor((utcMs - offsetMs) / 1000);
+}
+
 export async function getQuote(ticker: string): Promise<QuoteData | null> {
   try {
     const quote = await yf.quote(ticker);
@@ -41,6 +61,38 @@ export async function getQuote(ticker: string): Promise<QuoteData | null> {
     };
   } catch {
     return null;
+  }
+}
+
+/**
+ * Intraday bars for "1D" chart view.
+ * Fetches the last 2 calendar days so weekends/holidays fall back to the prior session.
+ * interval: "1m" | "2m" | "5m" | "15m" | "30m"
+ */
+export async function getIntraday(
+  ticker: string,
+  interval: string
+): Promise<IntradayBar[]> {
+  const from = new Date();
+  from.setDate(from.getDate() - 2); // 2 days back covers weekends
+  try {
+    const result = await yf.chart(ticker, {
+      period1: from,
+      interval: interval as "1m" | "2m" | "5m" | "15m" | "30m",
+    });
+    return ((result.quotes as any[]) ?? [])
+      .filter((q: any) => q.close !== null && q.date !== null)
+      .map((q: any) => ({
+        time: toETSeconds(new Date(q.date)),
+        open: q.open ?? 0,
+        high: q.high ?? 0,
+        low: q.low ?? 0,
+        close: q.close ?? 0,
+        volume: q.volume ?? 0,
+      }))
+      .sort((a, b) => a.time - b.time);
+  } catch {
+    return [];
   }
 }
 

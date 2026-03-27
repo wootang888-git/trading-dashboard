@@ -12,10 +12,12 @@ import {
 } from "lightweight-charts";
 import { Maximize2, Minimize2, RefreshCw } from "lucide-react";
 
-type Range = "5d" | "10d" | "1mo";
+type Range = "1d" | "5d" | "10d" | "1mo";
+type Interval = "1m" | "2m" | "5m" | "15m" | "30m";
 
 interface Bar {
-  time: string;
+  // string "YYYY-MM-DD" for daily, number (Unix seconds ET-adjusted) for intraday
+  time: string | number;
   open: number;
   high: number;
   low: number;
@@ -29,8 +31,9 @@ interface StockChartProps {
   targetPrice: number | null;
 }
 
-const RANGES: Range[] = ["5d", "10d", "1mo"];
-const RANGE_LABEL: Record<Range, string> = { "5d": "5D", "10d": "10D", "1mo": "1M" };
+const RANGES: Range[] = ["1d", "5d", "10d", "1mo"];
+const RANGE_LABEL: Record<Range, string> = { "1d": "1D", "5d": "5D", "10d": "10D", "1mo": "1M" };
+const INTERVALS: Interval[] = ["1m", "2m", "5m", "15m", "30m"];
 
 export default function StockChart({
   ticker,
@@ -38,35 +41,38 @@ export default function StockChart({
   stopPrice,
   targetPrice,
 }: StockChartProps) {
-  const wrapperRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
 
   const [range, setRange] = useState<Range>("10d");
+  const [interval, setInterval] = useState<Interval>("5m");
   const [bars, setBars] = useState<Bar[]>([]);
+  const [isIntraday, setIsIntraday] = useState(false);
   const [loading, setLoading] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/chart-data?ticker=${ticker}&range=${range}`);
+      const params = new URLSearchParams({ ticker, range });
+      if (range === "1d") params.set("interval", interval);
+      const res = await fetch(`/api/chart-data?${params}`);
       const d = await res.json();
       setBars(d.bars ?? []);
+      setIsIntraday(d.isIntraday ?? false);
     } finally {
       setLoading(false);
     }
-  }, [ticker, range]);
+  }, [ticker, range, interval]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  // Build chart whenever bars or price levels change
+  // Rebuild chart when bars or price levels change
   useEffect(() => {
     if (!containerRef.current || bars.length === 0) return;
 
-    // Remove previous chart
     if (chartRef.current) {
       chartRef.current.remove();
       chartRef.current = null;
@@ -88,7 +94,8 @@ export default function StockChart({
       },
       timeScale: {
         borderColor: "#1f2937",
-        timeVisible: false,
+        timeVisible: isIntraday,
+        secondsVisible: false,
         fixRightEdge: true,
       },
       crosshair: {
@@ -98,12 +105,12 @@ export default function StockChart({
       handleScale: { pinch: true, mouseWheel: true },
       handleScroll: { pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
       width: containerRef.current.clientWidth,
-      height: containerRef.current.clientHeight || 220,
+      height: containerRef.current.clientHeight || 240,
     });
 
     chartRef.current = chart;
 
-    // ── Reward zone (entry → target) ──
+    // ── Reward zone (entry → target, green shading) ──
     if (entryPrice && targetPrice && targetPrice > entryPrice) {
       const rewardS = chart.addSeries(BaselineSeries, {
         baseValue: { type: "price", price: entryPrice },
@@ -117,10 +124,11 @@ export default function StockChart({
         lastValueVisible: false,
         crosshairMarkerVisible: false,
       });
-      rewardS.setData(bars.map((b) => ({ time: b.time, value: targetPrice })));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      rewardS.setData(bars.map((b) => ({ time: b.time as any, value: targetPrice })));
     }
 
-    // ── Risk zone (stop → entry) ──
+    // ── Risk zone (stop → entry, red shading) ──
     if (entryPrice && stopPrice && stopPrice < entryPrice) {
       const riskS = chart.addSeries(BaselineSeries, {
         baseValue: { type: "price", price: entryPrice },
@@ -134,10 +142,11 @@ export default function StockChart({
         lastValueVisible: false,
         crosshairMarkerVisible: false,
       });
-      riskS.setData(bars.map((b) => ({ time: b.time, value: stopPrice })));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      riskS.setData(bars.map((b) => ({ time: b.time as any, value: stopPrice })));
     }
 
-    // ── Candlestick series (rendered on top of shading) ──
+    // ── Candlesticks (on top of shading) ──
     const candles = chart.addSeries(CandlestickSeries, {
       upColor: "#22c55e",
       downColor: "#ef4444",
@@ -146,7 +155,8 @@ export default function StockChart({
       wickUpColor: "#22c55e",
       wickDownColor: "#ef4444",
     });
-    candles.setData(bars);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    candles.setData(bars as any);
 
     // ── Price lines ──
     if (entryPrice) {
@@ -186,9 +196,9 @@ export default function StockChart({
       chart.remove();
       chartRef.current = null;
     };
-  }, [bars, entryPrice, stopPrice, targetPrice]);
+  }, [bars, entryPrice, stopPrice, targetPrice, isIntraday]);
 
-  // Resize observer — keeps chart sized to container
+  // Resize observer
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -196,7 +206,7 @@ export default function StockChart({
       if (chartRef.current && el) {
         chartRef.current.applyOptions({
           width: el.clientWidth,
-          height: el.clientHeight || 220,
+          height: el.clientHeight || 240,
         });
         chartRef.current.timeScale().fitContent();
       }
@@ -212,15 +222,14 @@ export default function StockChart({
 
   return (
     <div
-      ref={wrapperRef}
       className={
         fullscreen
-          ? "fixed inset-0 z-50 bg-gray-950 flex flex-col p-3 safe-area-inset"
+          ? "fixed inset-0 z-50 bg-gray-950 flex flex-col p-3"
           : "mt-3 border-t border-gray-800 pt-3"
       }
     >
-      {/* Controls */}
-      <div className="flex items-center justify-between mb-2">
+      {/* Row 1: Range + fullscreen */}
+      <div className="flex items-center justify-between mb-1.5">
         <div className="flex gap-1">
           {RANGES.map((r) => (
             <button
@@ -248,11 +257,31 @@ export default function StockChart({
         </div>
       </div>
 
+      {/* Row 2: Interval selector — only visible in 1D mode */}
+      {range === "1d" && (
+        <div className="flex gap-1 mb-1.5">
+          {INTERVALS.map((iv) => (
+            <button
+              key={iv}
+              onClick={() => setInterval(iv)}
+              className={`text-xs px-2 py-0.5 rounded transition-colors ${
+                interval === iv
+                  ? "bg-blue-900/60 text-blue-300 border border-blue-800"
+                  : "text-gray-500 hover:text-gray-300 border border-transparent"
+              }`}
+            >
+              {iv}
+            </button>
+          ))}
+          <span className="ml-1 text-xs text-gray-600 self-center">ET</span>
+        </div>
+      )}
+
       {/* Chart */}
       <div
         ref={containerRef}
         className="w-full rounded overflow-hidden"
-        style={{ height: fullscreen ? "calc(100dvh - 80px)" : "220px" }}
+        style={{ height: fullscreen ? "calc(100dvh - 100px)" : "240px" }}
       />
 
       {/* Legend */}
