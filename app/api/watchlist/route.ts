@@ -6,21 +6,24 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const { ticker, name, strategy } = body as {
     ticker: string;
-    name: string;
+    name?: string;
     strategy: Strategy;
   };
 
-  if (!ticker || !name || !strategy) {
-    return NextResponse.json({ error: "ticker, name, and strategy are required." }, { status: 400 });
+  if (!ticker || !strategy) {
+    return NextResponse.json({ error: "ticker and strategy are required." }, { status: 400 });
   }
 
-  const result = await addToWatchlist(ticker, name, strategy);
+  const normalizedTicker = ticker.trim().toUpperCase();
+  const normalizedName = (name ?? "").trim();
+
+  const result = await addToWatchlist(normalizedTicker, normalizedName, strategy);
   if (!result.success) {
     return NextResponse.json({ error: result.error }, { status: 400 });
   }
 
   return NextResponse.json({
-    item: { ticker: ticker.toUpperCase(), name, strategy },
+    item: { ticker: normalizedTicker, name: normalizedName, strategy },
   });
 }
 

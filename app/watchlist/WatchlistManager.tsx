@@ -37,7 +37,8 @@ export default function WatchlistManager({ initial }: { initial: WatchlistItem[]
     setError("");
     const t = ticker.trim().toUpperCase();
     const n = name.trim();
-    if (!t || !n) { setError("Ticker and name are required."); return; }
+    if (!t) { setError("Ticker symbol is required."); return; }
+    setTicker(t);
     if (items.length >= 100) { setError("Watchlist is at the 100 ticker limit."); return; }
 
     setLoading(true);
@@ -87,14 +88,14 @@ export default function WatchlistManager({ initial }: { initial: WatchlistItem[]
           <form onSubmit={handleAdd} className="space-y-3">
             <div className="flex gap-2">
               <Input
-                placeholder="Ticker (e.g. AAPL)"
+                placeholder="Ticker (e.g. aapl)"
                 value={ticker}
-                onChange={(e) => setTicker(e.target.value.toUpperCase())}
-                className="bg-gray-800 border-gray-700 text-white w-36 uppercase"
+                onChange={(e) => setTicker(e.target.value)}
+                className="bg-gray-800 border-gray-700 text-white w-36"
                 maxLength={10}
               />
               <Input
-                placeholder="Company name"
+                placeholder="Company name (optional)"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 className="bg-gray-800 border-gray-700 text-white flex-1"
