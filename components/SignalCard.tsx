@@ -7,6 +7,8 @@ interface SAInfo {
   quantRating: string | null;
   analystRating: string | null;
   earningsDays: number | null;
+  recentHeadline: string | null;
+  newsSentiment: "positive" | "negative" | "neutral" | null;
 }
 
 interface SignalCardProps {
@@ -129,7 +131,7 @@ export default function SignalCard({
           </div>
         </div>
 
-        {/* Seeking Alpha data (shown only if available) */}
+        {/* Seeking Alpha data */}
         {sa && (sa.quantRating || sa.analystRating) && (
           <div className="grid grid-cols-2 gap-2 text-xs mb-3">
             {sa.quantRating && (
@@ -148,6 +150,16 @@ export default function SignalCard({
                 </div>
               </div>
             )}
+          </div>
+        )}
+        {/* SA recent headline */}
+        {sa?.recentHeadline && (
+          <div className={`text-xs rounded px-2 py-1.5 mb-2 border-l-2 ${
+            sa.newsSentiment === "positive" ? "border-green-500 bg-green-950/40 text-green-300" :
+            sa.newsSentiment === "negative" ? "border-red-500 bg-red-950/40 text-red-300" :
+            "border-gray-600 bg-gray-800/40 text-gray-400"
+          }`}>
+            <span className="opacity-60 mr-1">SA:</span>{sa.recentHeadline}
           </div>
         )}
 

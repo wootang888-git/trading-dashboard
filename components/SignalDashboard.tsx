@@ -26,6 +26,8 @@ interface SignalData {
     quantRating: string | null;
     analystRating: string | null;
     earningsDays: number | null;
+    recentHeadline: string | null;
+    newsSentiment: "positive" | "negative" | "neutral" | null;
   };
 }
 
