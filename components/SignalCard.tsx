@@ -3,7 +3,16 @@
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import SAModal from "./SAModal";
+import StockChart from "./StockChart";
+
+/** Extracts the last dollar amount from a note string, e.g. "Buy stop $0.05 above $212.34..." → 212.34 */
+function parseLastPrice(note: string): number | null {
+  const matches = note.match(/\$(\d+(?:\.\d+)?)/g);
+  if (!matches || matches.length === 0) return null;
+  return parseFloat(matches[matches.length - 1].replace("$", ""));
+}
 
 interface SAInfo {
   quantRating: string | null;
@@ -55,8 +64,15 @@ export default function SignalCard({
   entryNote, stopNote, strategy, sa,
 }: SignalCardProps) {
   const [modalOpen, setModalOpen] = useState(false);
+  const [showChart, setShowChart] = useState(false);
 
   const changeColor = changePct >= 0 ? "text-green-400" : "text-red-400";
+
+  // Parse trade levels from signal notes
+  const entryPrice = parseLastPrice(entryNote);
+  const stopPrice = parseLastPrice(stopNote);
+  const risk = entryPrice && stopPrice ? Math.abs(entryPrice - stopPrice) : null;
+  const targetPrice = entryPrice && risk ? entryPrice + 2 * risk : null;
   const changeSign = changePct >= 0 ? "+" : "";
   const earningsWarning = sa?.earningsDays !== null && sa?.earningsDays !== undefined && sa.earningsDays <= 7;
 
@@ -144,6 +160,25 @@ export default function SignalCard({
               <div className="text-green-400 text-sm font-medium">▲ {entryNote}</div>
               <div className="text-red-400 text-sm font-medium">▼ {stopNote}</div>
             </div>
+          )}
+
+          {/* Chart toggle */}
+          <button
+            onClick={() => setShowChart((v) => !v)}
+            className="flex items-center gap-1 mt-3 text-xs text-gray-500 hover:text-gray-300 transition-colors w-full"
+          >
+            {showChart ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+            {showChart ? "Hide chart" : "Show chart"}
+          </button>
+
+          {/* Expandable chart */}
+          {showChart && (
+            <StockChart
+              ticker={ticker}
+              entryPrice={entryPrice}
+              stopPrice={stopPrice}
+              targetPrice={targetPrice}
+            />
           )}
 
         </CardContent>
