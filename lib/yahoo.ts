@@ -1,7 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-// yahoo-finance2 CJS/ESM interop requires runtime require + cast
+// yahoo-finance2 v3 is a class — must be instantiated with new
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const yf = require("yahoo-finance2").default as any;
+const YF = require("yahoo-finance2").default;
+const yf = new YF({ suppressNotices: ["yahooSurvey"] });
 
 export interface QuoteData {
   ticker: string;
