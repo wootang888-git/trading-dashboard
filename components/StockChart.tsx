@@ -13,7 +13,7 @@ import {
 import { Maximize2, Minimize2, RefreshCw } from "lucide-react";
 
 type Range = "1d" | "5d" | "10d" | "1mo";
-type Interval = "1m" | "2m" | "5m" | "15m" | "30m";
+type Interval = "1m" | "2m" | "5m" | "15m" | "30m" | "1h";
 
 interface Bar {
   // string "YYYY-MM-DD" for daily, number (Unix seconds ET-adjusted) for intraday
@@ -33,7 +33,7 @@ interface StockChartProps {
 
 const RANGES: Range[] = ["1d", "5d", "10d", "1mo"];
 const RANGE_LABEL: Record<Range, string> = { "1d": "1D", "5d": "5D", "10d": "10D", "1mo": "1M" };
-const INTERVALS: Interval[] = ["1m", "2m", "5m", "15m", "30m"];
+const INTERVALS: Interval[] = ["1m", "2m", "5m", "15m", "30m", "1h"];
 
 export default function StockChart({
   ticker,

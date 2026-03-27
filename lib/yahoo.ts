@@ -76,9 +76,11 @@ export async function getIntraday(
   const from = new Date();
   from.setDate(from.getDate() - 2); // 2 days back covers weekends
   try {
+    // Yahoo Finance uses "60m" for 1-hour bars
+    const yfInterval = interval === "1h" ? "60m" : interval;
     const result = await yf.chart(ticker, {
       period1: from,
-      interval: interval as "1m" | "2m" | "5m" | "15m" | "30m",
+      interval: yfInterval as "1m" | "2m" | "5m" | "15m" | "30m" | "60m",
     });
     return ((result.quotes as any[]) ?? [])
       .filter((q: any) => q.close !== null && q.date !== null)
