@@ -3,6 +3,7 @@ import SignalDashboard from "@/components/SignalDashboard";
 import { getWatchlist } from "@/lib/supabase";
 import { getQuote, getHistorical } from "@/lib/yahoo";
 import { buildSignal } from "@/lib/signals";
+import { getSAData } from "@/lib/seeking-alpha";
 
 export const revalidate = 300;
 
@@ -11,9 +12,10 @@ async function getInitialData() {
 
   const results = await Promise.all(
     watchlist.map(async ({ ticker, strategy }) => {
-      const [quote, bars] = await Promise.all([
+      const [quote, bars, sa] = await Promise.all([
         getQuote(ticker),
         getHistorical(ticker, 60),
+        getSAData(ticker),
       ]);
       if (!quote || bars.length === 0) return null;
       const signal = buildSignal(ticker, strategy, bars, quote.high52w);
@@ -24,6 +26,13 @@ async function getInitialData() {
         changePct: quote.changePct,
         volume: quote.volume,
         avgVolume: quote.avgVolume,
+        sa: {
+          quantRating: sa.quantRating,
+          analystRating: sa.analystRating,
+          earningsDays: sa.earningsDays,
+          recentHeadline: sa.recentHeadline,
+          newsSentiment: sa.newsSentiment,
+        },
       };
     })
   );
