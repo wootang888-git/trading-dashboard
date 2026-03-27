@@ -1,7 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import SAModal from "./SAModal";
 
 interface SAInfo {
   quantRating: string | null;
@@ -41,20 +43,10 @@ const scoreBarColor = (score: number) => {
   return "bg-gray-500";
 };
 
-const quantColor: Record<string, string> = {
-  "Very Bullish": "text-green-400",
-  "Bullish": "text-green-300",
-  "Neutral": "text-gray-400",
-  "Bearish": "text-red-300",
-  "Very Bearish": "text-red-400",
-};
-
-const analystColor: Record<string, string> = {
-  "Strong Buy": "text-green-400",
-  "Buy": "text-green-300",
-  "Hold": "text-gray-400",
-  "Sell": "text-red-300",
-  "Strong Sell": "text-red-400",
+const sentimentBorder: Record<string, string> = {
+  positive: "border-l-2 border-green-500 bg-green-950/40 text-green-300",
+  negative: "border-l-2 border-red-500 bg-red-950/40 text-red-300",
+  neutral:  "border-l-2 border-gray-600 bg-gray-800/40 text-gray-300",
 };
 
 export default function SignalCard({
@@ -62,115 +54,109 @@ export default function SignalCard({
   volumeRatio, rsi14, isAboveMa20, isAboveMa50,
   entryNote, stopNote, strategy, sa,
 }: SignalCardProps) {
+  const [modalOpen, setModalOpen] = useState(false);
+
   const changeColor = changePct >= 0 ? "text-green-400" : "text-red-400";
   const changeSign = changePct >= 0 ? "+" : "";
   const earningsWarning = sa?.earningsDays !== null && sa?.earningsDays !== undefined && sa.earningsDays <= 7;
 
   return (
-    <Card className="bg-gray-900 border-gray-800 hover:border-gray-600 transition-colors">
-      <CardContent className="p-4">
-        {/* Header row */}
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-white font-bold text-lg">{ticker}</span>
-            <Badge className={`text-xs ${strengthColors[strength]}`}>
-              {strength.toUpperCase()}
-            </Badge>
-            <Badge variant="outline" className="text-xs text-gray-400">
-              {strategy.replace(/_/g, " ")}
-            </Badge>
-            {earningsWarning && (
-              <Badge className="text-xs bg-orange-900/60 text-orange-300 border-orange-700">
-                ⚠ Earnings {sa!.earningsDays === 0 ? "today" : `in ${sa!.earningsDays}d`}
+    <>
+      <Card className="bg-gray-900 border-gray-800 hover:border-gray-600 transition-colors">
+        <CardContent className="p-4">
+
+          {/* Header row */}
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-white font-bold text-xl">{ticker}</span>
+              <Badge className={`text-xs ${strengthColors[strength]}`}>
+                {strength.toUpperCase()}
               </Badge>
-            )}
-          </div>
-          <div className="text-right shrink-0">
-            <div className="text-white font-semibold">${price.toFixed(2)}</div>
-            <div className={`text-sm ${changeColor}`}>
-              {changeSign}{changePct.toFixed(2)}%
+              <Badge variant="outline" className="text-xs text-gray-400">
+                {strategy.replace(/_/g, " ")}
+              </Badge>
+              {earningsWarning && (
+                <Badge className="text-xs bg-orange-900/60 text-orange-300 border-orange-700">
+                  ⚠ Earnings {sa!.earningsDays === 0 ? "today" : `in ${sa!.earningsDays}d`}
+                </Badge>
+              )}
             </div>
-          </div>
-        </div>
-
-        {/* Score bar */}
-        <div className="mb-3">
-          <div className="flex justify-between text-xs text-gray-400 mb-1">
-            <span>Signal Score</span>
-            <span className="font-bold text-white">{score}/10</span>
-          </div>
-          <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-            <div
-              className={`h-full rounded-full transition-all ${scoreBarColor(score)}`}
-              style={{ width: `${score * 10}%` }}
-            />
-          </div>
-        </div>
-
-        {/* Technical indicators */}
-        <div className="grid grid-cols-3 gap-2 text-xs mb-3">
-          <div className="bg-gray-800 rounded p-2 text-center">
-            <div className="text-gray-400">RSI 14</div>
-            <div className={`font-bold ${rsi14 >= 50 && rsi14 <= 75 ? "text-green-400" : "text-yellow-400"}`}>
-              {rsi14.toFixed(0)}
-            </div>
-          </div>
-          <div className="bg-gray-800 rounded p-2 text-center">
-            <div className="text-gray-400">Vol Ratio</div>
-            <div className={`font-bold ${volumeRatio >= 1.5 ? "text-green-400" : "text-gray-300"}`}>
-              {volumeRatio.toFixed(1)}x
-            </div>
-          </div>
-          <div className="bg-gray-800 rounded p-2 text-center">
-            <div className="text-gray-400">MAs</div>
-            <div className="font-bold">
-              <span className={isAboveMa20 ? "text-green-400" : "text-red-400"}>20</span>
-              {" / "}
-              <span className={isAboveMa50 ? "text-green-400" : "text-red-400"}>50</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Seeking Alpha data */}
-        {sa && (sa.quantRating || sa.analystRating) && (
-          <div className="grid grid-cols-2 gap-2 text-xs mb-3">
-            {sa.quantRating && (
-              <div className="bg-gray-800 rounded p-2 text-center">
-                <div className="text-gray-400">SA Quant</div>
-                <div className={`font-bold ${quantColor[sa.quantRating] ?? "text-gray-300"}`}>
-                  {sa.quantRating}
-                </div>
+            <div className="text-right shrink-0">
+              <div className="text-white font-semibold text-base">${price.toFixed(2)}</div>
+              <div className={`text-sm font-medium ${changeColor}`}>
+                {changeSign}{changePct.toFixed(2)}%
               </div>
-            )}
-            {sa.analystRating && (
-              <div className="bg-gray-800 rounded p-2 text-center">
-                <div className="text-gray-400">Analyst</div>
-                <div className={`font-bold ${analystColor[sa.analystRating] ?? "text-gray-300"}`}>
-                  {sa.analystRating}
-                </div>
-              </div>
-            )}
+            </div>
           </div>
-        )}
-        {/* SA recent headline */}
-        {sa?.recentHeadline && (
-          <div className={`text-xs rounded px-2 py-1.5 mb-2 border-l-2 ${
-            sa.newsSentiment === "positive" ? "border-green-500 bg-green-950/40 text-green-300" :
-            sa.newsSentiment === "negative" ? "border-red-500 bg-red-950/40 text-red-300" :
-            "border-gray-600 bg-gray-800/40 text-gray-400"
-          }`}>
-            <span className="opacity-60 mr-1">SA:</span>{sa.recentHeadline}
-          </div>
-        )}
 
-        {/* Trade notes */}
-        {score >= 5 && (
-          <div className="space-y-1 text-xs border-t border-gray-800 pt-2 mt-2">
-            <div className="text-green-400">▲ {entryNote}</div>
-            <div className="text-red-400">▼ {stopNote}</div>
+          {/* Score bar */}
+          <div className="mb-3">
+            <div className="flex justify-between text-sm text-gray-400 mb-1">
+              <span>Signal Score</span>
+              <span className="font-bold text-white text-base">{score}/10</span>
+            </div>
+            <div className="h-2.5 bg-gray-700 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${scoreBarColor(score)}`}
+                style={{ width: `${score * 10}%` }}
+              />
+            </div>
           </div>
-        )}
-      </CardContent>
-    </Card>
+
+          {/* Technical indicators */}
+          <div className="grid grid-cols-3 gap-2 mb-3">
+            <div className="bg-gray-800 rounded p-2 text-center">
+              <div className="text-gray-400 text-xs mb-0.5">RSI 14</div>
+              <div className={`font-bold text-base ${rsi14 >= 50 && rsi14 <= 75 ? "text-green-400" : "text-yellow-400"}`}>
+                {rsi14.toFixed(0)}
+              </div>
+            </div>
+            <div className="bg-gray-800 rounded p-2 text-center">
+              <div className="text-gray-400 text-xs mb-0.5">Vol Ratio</div>
+              <div className={`font-bold text-base ${volumeRatio >= 1.5 ? "text-green-400" : "text-gray-300"}`}>
+                {volumeRatio.toFixed(1)}x
+              </div>
+            </div>
+            <div className="bg-gray-800 rounded p-2 text-center">
+              <div className="text-gray-400 text-xs mb-0.5">MAs</div>
+              <div className="font-bold text-base">
+                <span className={isAboveMa20 ? "text-green-400" : "text-red-400"}>20</span>
+                {" / "}
+                <span className={isAboveMa50 ? "text-green-400" : "text-red-400"}>50</span>
+              </div>
+            </div>
+          </div>
+
+          {/* SA headline — clickable */}
+          {sa?.recentHeadline && (
+            <button
+              onClick={() => setModalOpen(true)}
+              className={`w-full text-left text-sm rounded px-3 py-2 mb-2 transition-opacity hover:opacity-80 ${sentimentBorder[sa.newsSentiment ?? "neutral"]}`}
+            >
+              <span className="opacity-60 text-xs mr-1">SA ↗</span>
+              {sa.recentHeadline}
+            </button>
+          )}
+
+          {/* Trade notes */}
+          {score >= 5 && (
+            <div className="space-y-1 border-t border-gray-800 pt-2 mt-2">
+              <div className="text-green-400 text-sm font-medium">▲ {entryNote}</div>
+              <div className="text-red-400 text-sm font-medium">▼ {stopNote}</div>
+            </div>
+          )}
+
+        </CardContent>
+      </Card>
+
+      {sa && (
+        <SAModal
+          open={modalOpen}
+          onClose={() => setModalOpen(false)}
+          ticker={ticker}
+          sa={sa}
+        />
+      )}
+    </>
   );
 }
