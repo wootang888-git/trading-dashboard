@@ -43,6 +43,7 @@ export default function StockChart({
 }: StockChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
 
   const [range, setRange] = useState<Range>("10d");
   const [interval, setInterval] = useState<Interval>("5m");
@@ -87,6 +88,11 @@ export default function StockChart({
       grid: {
         vertLines: { color: "#111827" },
         horzLines: { color: "#111827" },
+      },
+      leftPriceScale: {
+        visible: true,
+        borderColor: "#1f2937",
+        textColor: "#9ca3af",
       },
       rightPriceScale: {
         mode: PriceScaleMode.Percentage,
@@ -192,6 +198,32 @@ export default function StockChart({
 
     chart.timeScale().fitContent();
 
+    // ── OHLC tooltip on crosshair move ──
+    chart.subscribeCrosshairMove((param) => {
+      const tooltip = tooltipRef.current;
+      if (!tooltip) return;
+      if (!param.time || !param.point || param.point.x < 0 || param.point.y < 0) {
+        tooltip.style.display = "none";
+        return;
+      }
+      const data = param.seriesData.get(candles) as
+        | { open: number; high: number; low: number; close: number }
+        | undefined;
+      if (!data) { tooltip.style.display = "none"; return; }
+
+      const isUp = data.close >= data.open;
+      tooltip.innerHTML = `
+        <div class="flex gap-2 items-center text-xs font-mono">
+          <span class="${isUp ? "text-green-400" : "text-red-400"} font-semibold">
+            ${isUp ? "▲" : "▼"} C ${data.close.toFixed(2)}
+          </span>
+          <span class="text-gray-400">O ${data.open.toFixed(2)}</span>
+          <span class="text-green-300">H ${data.high.toFixed(2)}</span>
+          <span class="text-red-300">L ${data.low.toFixed(2)}</span>
+        </div>`;
+      tooltip.style.display = "block";
+    });
+
     return () => {
       chart.remove();
       chartRef.current = null;
@@ -277,12 +309,19 @@ export default function StockChart({
         </div>
       )}
 
-      {/* Chart */}
-      <div
-        ref={containerRef}
-        className="w-full rounded overflow-hidden"
-        style={{ height: fullscreen ? "calc(100dvh - 100px)" : "240px" }}
-      />
+      {/* Chart + OHLC tooltip */}
+      <div className="relative">
+        <div
+          ref={tooltipRef}
+          style={{ display: "none" }}
+          className="absolute top-1 left-1/2 -translate-x-1/2 z-10 bg-gray-900/90 border border-gray-700 rounded px-2 py-1 pointer-events-none"
+        />
+        <div
+          ref={containerRef}
+          className="w-full rounded overflow-hidden"
+          style={{ height: fullscreen ? "calc(100dvh - 100px)" : "240px" }}
+        />
+      </div>
 
       {/* Legend */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-xs text-gray-500">
