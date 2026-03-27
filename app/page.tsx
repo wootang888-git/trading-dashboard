@@ -1,38 +1,42 @@
 import MarketBanner from "@/components/MarketBanner";
 import SignalCard from "@/components/SignalCard";
+import { WATCHLIST } from "@/lib/watchlist";
+import { getQuote, getHistorical } from "@/lib/yahoo";
+import { buildSignal } from "@/lib/signals";
 
-interface SignalData {
-  ticker: string;
-  score: number;
-  strength: string;
-  strategy: string;
-  price: number;
-  changePct: number;
-  indicators: {
-    rsi14: number;
-    volumeRatio: number;
-    isAboveMa20: boolean;
-    isAboveMa50: boolean;
-  };
-  entryNote: string;
-  stopNote: string;
-}
+export const revalidate = 900; // rebuild page every 15 min
 
-async function getSignals(): Promise<{
-  signals: SignalData[];
-  marketCondition: "bull" | "bear" | "neutral";
-}> {
-  try {
-    const baseUrl =
-      process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
-    const res = await fetch(`${baseUrl}/api/signals`, {
-      next: { revalidate: 900 },
-    });
-    if (!res.ok) throw new Error("fetch failed");
-    return res.json();
-  } catch {
-    return { signals: [], marketCondition: "neutral" };
-  }
+async function getSignals() {
+  const results = await Promise.all(
+    WATCHLIST.map(async ({ ticker, strategy }) => {
+      const [quote, bars] = await Promise.all([
+        getQuote(ticker),
+        getHistorical(ticker, 60),
+      ]);
+      if (!quote || bars.length === 0) return null;
+
+      const signal = buildSignal(ticker, strategy, bars, quote.high52w);
+      return {
+        ...signal,
+        price: quote.price,
+        change: quote.change,
+        changePct: quote.changePct,
+        volume: quote.volume,
+        avgVolume: quote.avgVolume,
+      };
+    })
+  );
+
+  const signals = results.filter(Boolean).sort((a, b) => b!.score - a!.score);
+
+  const spySignal = signals.find((s) => s?.ticker === "SPY");
+  const marketCondition: "bull" | "bear" | "neutral" = spySignal
+    ? spySignal.indicators.isAboveMa20
+      ? "bull"
+      : "bear"
+    : "neutral";
+
+  return { signals: signals as NonNullable<(typeof signals)[number]>[], marketCondition };
 }
 
 export default async function DashboardPage() {
