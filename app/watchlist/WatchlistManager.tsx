@@ -15,12 +15,14 @@ const strategyLabel: Record<Strategy, string> = {
   momentum: "Momentum",
   mean_reversion: "Mean Reversion",
   etf_rotation: "ETF Rotation",
+  ema_pullback: "8 EMA Pullback",
 };
 
 const strategyColor: Record<Strategy, string> = {
   momentum: "bg-blue-900/40 text-blue-300 border-blue-800",
   mean_reversion: "bg-purple-900/40 text-purple-300 border-purple-800",
   etf_rotation: "bg-teal-900/40 text-teal-300 border-teal-800",
+  ema_pullback: "bg-cyan-900/40 text-cyan-300 border-cyan-800",
 };
 
 export default function WatchlistManager({ initial }: { initial: WatchlistItem[] }) {

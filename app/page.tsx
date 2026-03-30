@@ -1,9 +1,7 @@
-import Link from "next/link";
 import SignalDashboard from "@/components/SignalDashboard";
 import { getWatchlist } from "@/lib/supabase";
-import { getQuote, getHistorical } from "@/lib/yahoo";
+import { getQuote, getHistorical, getNews } from "@/lib/yahoo";
 import { buildSignal } from "@/lib/signals";
-import { getSAData } from "@/lib/seeking-alpha";
 
 export const revalidate = 300;
 
@@ -12,13 +10,27 @@ async function getInitialData() {
 
   const results = await Promise.all(
     watchlist.map(async ({ ticker, strategy }) => {
-      const [quote, bars, sa] = await Promise.all([
+      const [quote, bars, news] = await Promise.all([
         getQuote(ticker),
         getHistorical(ticker, 60),
-        getSAData(ticker),
+        getNews(ticker),
       ]);
       if (!quote || bars.length === 0) return null;
       const signal = buildSignal(ticker, strategy, bars, quote.high52w);
+
+      const POSITIVE = ["buy", "bullish", "outperform", "upgrade", "strong", "surge", "rally", "beat", "upside", "growth"];
+      const NEGATIVE = ["sell", "bearish", "underperform", "downgrade", "weak", "crash", "avoid", "miss", "cut", "risk"];
+      const sentiment = (title: string): "positive" | "negative" | "neutral" => {
+        const lower = title.toLowerCase();
+        const pos = POSITIVE.filter((w) => lower.includes(w)).length;
+        const neg = NEGATIVE.filter((w) => lower.includes(w)).length;
+        return pos > neg ? "positive" : neg > pos ? "negative" : "neutral";
+      };
+
+      const earningsDays = quote.earningsTimestamp
+        ? Math.ceil((quote.earningsTimestamp.getTime() - Date.now()) / 86400000)
+        : null;
+
       return {
         ...signal,
         price: quote.price,
@@ -27,11 +39,11 @@ async function getInitialData() {
         volume: quote.volume,
         avgVolume: quote.avgVolume,
         sa: {
-          quantRating: sa.quantRating,
-          analystRating: sa.analystRating,
-          earningsDays: sa.earningsDays,
-          recentHeadline: sa.recentHeadline,
-          newsSentiment: sa.newsSentiment,
+          earningsDays: earningsDays !== null && earningsDays >= 0 && earningsDays <= 14 ? earningsDays : null,
+          recentHeadline: news?.title ?? null,
+          newsSentiment: news?.title ? sentiment(news.title) : null,
+          newsUrl: news?.link ?? null,
+          newsPublisher: news?.publisher ?? null,
         },
       };
     })
@@ -54,33 +66,12 @@ export default async function DashboardPage() {
   const initial = await getInitialData();
 
   return (
-    <main className="min-h-screen bg-gray-950 text-white">
-      <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold">Trading Dashboard</h1>
-            <p className="text-gray-400 text-sm mt-1">
-              {new Date().toLocaleDateString("en-US", {
-                weekday: "long",
-                year: "numeric",
-                month: "long",
-                day: "numeric",
-              })}
-            </p>
-          </div>
-          <Link
-            href="/watchlist"
-            className="text-xs text-gray-400 hover:text-white border border-gray-700 hover:border-gray-500 rounded-lg px-3 py-2 transition-colors"
-          >
-            Manage Watchlist ({initial.signals.length})
-          </Link>
-        </div>
-
+    <main className="min-h-screen" style={{ backgroundColor: "var(--surface)", color: "var(--on-surface)" }}>
+      <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
         {/* Client component handles display + auto-refresh */}
         <SignalDashboard initial={initial} />
 
-        <footer className="text-center text-gray-600 text-xs pt-4 pb-8">
+        <footer className="text-center text-xs pt-4 pb-8" style={{ color: "var(--outline)" }}>
           Not financial advice. Paper trade first. Protect your capital.
         </footer>
       </div>

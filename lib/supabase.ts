@@ -61,6 +61,7 @@ export interface Trade {
   id?: string;
   ticker: string;
   entry_price: number;
+  stop_price: number | null;
   exit_price: number | null;
   shares: number;
   entry_date: string;
@@ -86,5 +87,10 @@ export async function addTrade(trade: Omit<Trade, "id" | "created_at">): Promise
 
 export async function updateTrade(id: string, updates: Partial<Trade>): Promise<boolean> {
   const { error } = await supabase.from("trades").update(updates).eq("id", id);
+  return !error;
+}
+
+export async function deleteTrade(id: string): Promise<boolean> {
+  const { error } = await supabase.from("trades").delete().eq("id", id);
   return !error;
 }

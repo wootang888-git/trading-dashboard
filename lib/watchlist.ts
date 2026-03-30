@@ -1,4 +1,4 @@
-export type Strategy = "momentum" | "mean_reversion" | "etf_rotation";
+export type Strategy = "momentum" | "mean_reversion" | "etf_rotation" | "ema_pullback";
 
 export interface WatchlistEntry {
   ticker: string;
@@ -34,4 +34,8 @@ export const WATCHLIST: WatchlistEntry[] = [
   // Broad Market ETFs
   { ticker: "SPY",   name: "S&P 500 ETF",        strategy: "etf_rotation" },
   { ticker: "QQQ",   name: "Nasdaq 100 ETF",     strategy: "etf_rotation" },
+  // Mean Reversion — high-beta oscillators
+  { ticker: "PLTR",  name: "Palantir",            strategy: "mean_reversion" },
+  { ticker: "SOFI",  name: "SoFi Technologies",  strategy: "mean_reversion" },
+  { ticker: "MSTR",  name: "MicroStrategy",      strategy: "mean_reversion" },
 ];

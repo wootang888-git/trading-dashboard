@@ -5,6 +5,7 @@ import {
   createChart,
   CandlestickSeries,
   BaselineSeries,
+  LineSeries,
   ColorType,
   PriceScaleMode,
   LineStyle,
@@ -12,8 +13,22 @@ import {
 } from "lightweight-charts";
 import { Maximize2, Minimize2, RefreshCw } from "lucide-react";
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Calculate EMA series from bar close prices */
+function calcEMAFromBars(bars: Bar[], period: number): number[] {
+  if (bars.length === 0) return [];
+  const k = 2 / (period + 1);
+  const seed = bars.slice(0, Math.min(period, bars.length))
+    .reduce((s, b) => s + b.close, 0) / Math.min(period, bars.length);
+  let ema = seed;
+  return bars.map((b) => { ema = b.close * k + ema * (1 - k); return ema; });
+}
+
+
 type Range = "1d" | "5d" | "10d" | "1mo";
-type Interval = "1m" | "2m" | "5m" | "15m" | "30m" | "1h";
+type IntradayInterval = "1m" | "2m" | "5m" | "15m" | "30m" | "1h";
+type MultiInterval = "daily" | "30m" | "1h" | "2h" | "4h";
 
 interface Bar {
   // string "YYYY-MM-DD" for daily, number (Unix seconds ET-adjusted) for intraday
@@ -33,7 +48,16 @@ interface StockChartProps {
 
 const RANGES: Range[] = ["1d", "5d", "10d", "1mo"];
 const RANGE_LABEL: Record<Range, string> = { "1d": "1D", "5d": "5D", "10d": "10D", "1mo": "1M" };
-const INTERVALS: Interval[] = ["1m", "2m", "5m", "15m", "30m", "1h"];
+const INTRADAY_INTERVALS: IntradayInterval[] = ["1m", "2m", "5m", "15m", "30m", "1h"];
+const MULTI_INTERVALS: Record<Range, MultiInterval[]> = {
+  "1d": [],
+  "5d":  ["daily", "30m", "1h"],
+  "10d": ["daily", "30m", "1h", "2h"],
+  "1mo": ["daily", "1h", "2h", "4h"],
+};
+const MULTI_LABEL: Record<MultiInterval, string> = {
+  daily: "D", "30m": "30m", "1h": "1h", "2h": "2h", "4h": "4h",
+};
 
 export default function StockChart({
   ticker,
@@ -46,17 +70,25 @@ export default function StockChart({
   const tooltipRef = useRef<HTMLDivElement>(null);
 
   const [range, setRange] = useState<Range>("10d");
-  const [interval, setInterval] = useState<Interval>("5m");
+  const [interval, setInterval] = useState<IntradayInterval>("5m");
+  const [multiInterval, setMultiInterval] = useState<MultiInterval>("daily");
   const [bars, setBars] = useState<Bar[]>([]);
   const [isIntraday, setIsIntraday] = useState(false);
   const [loading, setLoading] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  const [showFib, setShowFib] = useState(false);
+  const [fibHigh, setFibHigh] = useState("");
+  const [fibLow, setFibLow] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams({ ticker, range });
-      if (range === "1d") params.set("interval", interval);
+      if (range === "1d") {
+        params.set("interval", interval);
+      } else if (multiInterval !== "daily") {
+        params.set("interval", multiInterval);
+      }
       const res = await fetch(`/api/chart-data?${params}`);
       const d = await res.json();
       setBars(d.bars ?? []);
@@ -64,7 +96,7 @@ export default function StockChart({
     } finally {
       setLoading(false);
     }
-  }, [ticker, range, interval]);
+  }, [ticker, range, interval, multiInterval]);
 
   useEffect(() => {
     load();
@@ -81,25 +113,25 @@ export default function StockChart({
 
     const chart = createChart(containerRef.current, {
       layout: {
-        background: { type: ColorType.Solid, color: "#030712" },
-        textColor: "#6b7280",
+        background: { type: ColorType.Solid, color: "#090f15" },
+        textColor: "#bacbbd",
         fontSize: 11,
       },
       grid: {
-        vertLines: { color: "#111827" },
-        horzLines: { color: "#111827" },
+        vertLines: { color: "rgba(60,74,64,0.15)" },
+        horzLines: { color: "rgba(60,74,64,0.15)" },
       },
       leftPriceScale: {
         visible: true,
-        borderColor: "#1f2937",
-        textColor: "#9ca3af",
+        borderColor: "rgba(60,74,64,0.3)",
+        textColor: "#bacbbd",
       },
       rightPriceScale: {
         mode: PriceScaleMode.Percentage,
-        borderColor: "#1f2937",
+        borderColor: "rgba(60,74,64,0.3)",
       },
       timeScale: {
-        borderColor: "#1f2937",
+        borderColor: "rgba(60,74,64,0.3)",
         timeVisible: isIntraday,
         secondsVisible: false,
         fixRightEdge: true,
@@ -117,14 +149,15 @@ export default function StockChart({
     chartRef.current = chart;
 
     // ── Reward zone (entry → target, green shading) ──
+    // bottomFillColor fills below the data line (target → entry), which is the reward band
     if (entryPrice && targetPrice && targetPrice > entryPrice) {
       const rewardS = chart.addSeries(BaselineSeries, {
         baseValue: { type: "price", price: entryPrice },
-        topFillColor1: "rgba(34,197,94,0.15)",
-        topFillColor2: "rgba(34,197,94,0.04)",
+        topFillColor1: "rgba(0,0,0,0)",
+        topFillColor2: "rgba(0,0,0,0)",
         topLineColor: "transparent",
-        bottomFillColor1: "rgba(0,0,0,0)",
-        bottomFillColor2: "rgba(0,0,0,0)",
+        bottomFillColor1: "rgba(34,197,94,0.22)",
+        bottomFillColor2: "rgba(34,197,94,0.07)",
         bottomLineColor: "transparent",
         priceLineVisible: false,
         lastValueVisible: false,
@@ -135,14 +168,15 @@ export default function StockChart({
     }
 
     // ── Risk zone (stop → entry, red shading) ──
+    // topFillColor fills above the data line (stop → entry), which is the risk band
     if (entryPrice && stopPrice && stopPrice < entryPrice) {
       const riskS = chart.addSeries(BaselineSeries, {
         baseValue: { type: "price", price: entryPrice },
-        topFillColor1: "rgba(0,0,0,0)",
-        topFillColor2: "rgba(0,0,0,0)",
+        topFillColor1: "rgba(239,68,68,0.22)",
+        topFillColor2: "rgba(239,68,68,0.07)",
         topLineColor: "transparent",
-        bottomFillColor1: "rgba(239,68,68,0.15)",
-        bottomFillColor2: "rgba(239,68,68,0.04)",
+        bottomFillColor1: "rgba(0,0,0,0)",
+        bottomFillColor2: "rgba(0,0,0,0)",
         bottomLineColor: "transparent",
         priceLineVisible: false,
         lastValueVisible: false,
@@ -196,6 +230,72 @@ export default function StockChart({
       });
     }
 
+    // ── EMA lines (only for daily bars — intraday is too noisy) ──
+    if (!isIntraday) {
+      const ema8Values = calcEMAFromBars(bars, 8);
+      const ema8Series = chart.addSeries(LineSeries, {
+        color: "#00e7f6",
+        lineWidth: 1,
+        lineStyle: LineStyle.Solid,
+        priceLineVisible: false,
+        lastValueVisible: true,
+        crosshairMarkerVisible: false,
+        title: "8 EMA",
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ema8Series.setData(bars.map((b, i) => ({ time: b.time as any, value: ema8Values[i] })));
+
+      const ema20Values = calcEMAFromBars(bars, 20);
+      const ema20Series = chart.addSeries(LineSeries, {
+        color: "rgba(200,168,75,0.6)",
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        priceLineVisible: false,
+        lastValueVisible: true,
+        crosshairMarkerVisible: false,
+        title: "20 EMA",
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ema20Series.setData(bars.map((b, i) => ({ time: b.time as any, value: ema20Values[i] })));
+    }
+
+    // ── Fibonacci retracement (user-anchored, labels on LEFT axis) ──
+    const fh = parseFloat(fibHigh);
+    const fl = parseFloat(fibLow);
+    if (fh > 0 && fl > 0 && fh > fl) {
+      // Attach fib price lines to a hidden series on the LEFT price scale so
+      // labels appear on the left (absolute $) axis, keeping the right (%) axis clear.
+      const fibAnchor = chart.addSeries(LineSeries, {
+        priceScaleId: "left",
+        color: "transparent",
+        lineWidth: 1,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      fibAnchor.setData(bars.map((b) => ({ time: b.time as any, value: fh })));
+
+      const fibRange = fh - fl;
+      [
+        { pct: 0.236, label: "23.6%" },
+        { pct: 0.382, label: "38.2%" },
+        { pct: 0.500, label: "50.0%" },
+        { pct: 0.618, label: "61.8%" },
+        { pct: 0.786, label: "78.6%" },
+      ].forEach(({ pct, label }) => {
+        const price = fh - pct * fibRange;
+        fibAnchor.createPriceLine({
+          price,
+          color: `rgba(200,168,75,${pct < 0.4 || pct > 0.7 ? 0.5 : 0.85})`,
+          lineWidth: 1,
+          lineStyle: LineStyle.Dotted,
+          axisLabelVisible: true,
+          title: `${label} $${price.toFixed(2)}`,
+        });
+      });
+    }
+
     chart.timeScale().fitContent();
 
     // ── OHLC tooltip on crosshair move ──
@@ -228,7 +328,7 @@ export default function StockChart({
       chart.remove();
       chartRef.current = null;
     };
-  }, [bars, entryPrice, stopPrice, targetPrice, isIntraday]);
+  }, [bars, entryPrice, stopPrice, targetPrice, isIntraday, fibHigh, fibLow]);
 
   // Resize observer
   useEffect(() => {
@@ -266,7 +366,7 @@ export default function StockChart({
           {RANGES.map((r) => (
             <button
               key={r}
-              onClick={() => setRange(r)}
+              onClick={() => { setRange(r); setMultiInterval("daily"); }}
               className={`text-xs px-2 py-0.5 rounded transition-colors ${
                 range === r
                   ? "bg-gray-700 text-white"
@@ -280,6 +380,24 @@ export default function StockChart({
         <div className="flex items-center gap-2">
           {loading && <RefreshCw size={10} className="animate-spin text-gray-500" />}
           <button
+            onClick={() => {
+              setShowFib((v) => {
+                if (v) { setFibHigh(""); setFibLow(""); }
+                return !v;
+              });
+            }}
+            className={`text-xs px-1.5 py-0.5 rounded transition-colors ${
+              showFib && fibHigh && fibLow
+                ? "bg-yellow-900/60 text-yellow-300 border border-yellow-800"
+                : showFib
+                ? "bg-gray-700 text-gray-300"
+                : "text-gray-500 hover:text-gray-300"
+            }`}
+            title="Fibonacci retracement tool"
+          >
+            Fib
+          </button>
+          <button
             onClick={() => setFullscreen((f) => !f)}
             className="text-gray-500 hover:text-white transition-colors p-0.5"
             title={fullscreen ? "Exit full screen" : "Full screen"}
@@ -289,10 +407,10 @@ export default function StockChart({
         </div>
       </div>
 
-      {/* Row 2: Interval selector — only visible in 1D mode */}
+      {/* Row 2: Interval selector */}
       {range === "1d" && (
         <div className="flex gap-1 mb-1.5">
-          {INTERVALS.map((iv) => (
+          {INTRADAY_INTERVALS.map((iv) => (
             <button
               key={iv}
               onClick={() => setInterval(iv)}
@@ -306,6 +424,61 @@ export default function StockChart({
             </button>
           ))}
           <span className="ml-1 text-xs text-gray-600 self-center">ET</span>
+        </div>
+      )}
+      {range !== "1d" && (
+        <div className="flex gap-1 mb-1.5">
+          {MULTI_INTERVALS[range].map((iv) => (
+            <button
+              key={iv}
+              onClick={() => setMultiInterval(iv)}
+              className={`text-xs px-2 py-0.5 rounded transition-colors ${
+                multiInterval === iv
+                  ? "bg-blue-900/60 text-blue-300 border border-blue-800"
+                  : "text-gray-500 hover:text-gray-300 border border-transparent"
+              }`}
+            >
+              {MULTI_LABEL[iv]}
+            </button>
+          ))}
+          {multiInterval !== "daily" && (
+            <span className="ml-1 text-xs text-gray-600 self-center">ET</span>
+          )}
+        </div>
+      )}
+
+      {/* Fib anchor inputs */}
+      {showFib && (
+        <div className="flex items-center gap-2 mb-1.5 text-xs">
+          <span className="text-yellow-600 font-medium">Fib</span>
+          <label className="flex items-center gap-1 text-gray-500">
+            High $
+            <input
+              type="number"
+              value={fibHigh}
+              onChange={(e) => setFibHigh(e.target.value)}
+              placeholder="0.00"
+              className="w-20 bg-gray-800 text-white border border-gray-700 rounded px-1.5 py-0.5 text-xs focus:outline-none focus:border-yellow-700"
+            />
+          </label>
+          <label className="flex items-center gap-1 text-gray-500">
+            Low $
+            <input
+              type="number"
+              value={fibLow}
+              onChange={(e) => setFibLow(e.target.value)}
+              placeholder="0.00"
+              className="w-20 bg-gray-800 text-white border border-gray-700 rounded px-1.5 py-0.5 text-xs focus:outline-none focus:border-yellow-700"
+            />
+          </label>
+          {(fibHigh || fibLow) && (
+            <button
+              onClick={() => { setFibHigh(""); setFibLow(""); }}
+              className="text-gray-600 hover:text-gray-400 transition-colors"
+            >
+              Clear
+            </button>
+          )}
         </div>
       )}
 
@@ -341,6 +514,24 @@ export default function StockChart({
           <span className="flex items-center gap-1.5">
             <span className="inline-block w-4 border-t border-red-500 border-dashed" />
             Stop ${stopPrice.toFixed(2)}
+          </span>
+        )}
+        {!isIntraday && (
+          <>
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block w-4 border-t border-[#00e7f6]" />
+              8 EMA
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block w-4 border-t border-dashed border-[#c8a84b] opacity-60" />
+              20 EMA
+            </span>
+          </>
+        )}
+        {parseFloat(fibHigh) > parseFloat(fibLow) && parseFloat(fibLow) > 0 && (
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block w-4 border-t border-dotted border-[#c8a84b]" />
+            Fib {fibHigh}–{fibLow}
           </span>
         )}
         {rr && (

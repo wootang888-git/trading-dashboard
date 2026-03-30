@@ -14,6 +14,14 @@ export interface QuoteData {
   high52w: number;
   low52w: number;
   marketCap: number | null;
+  earningsTimestamp: Date | null;
+}
+
+export interface NewsItem {
+  title: string;
+  publisher: string;
+  link: string;
+  publishedAt: Date;
 }
 
 export interface HistoricalBar {
@@ -58,6 +66,24 @@ export async function getQuote(ticker: string): Promise<QuoteData | null> {
       high52w: quote.fiftyTwoWeekHigh ?? 0,
       low52w: quote.fiftyTwoWeekLow ?? 0,
       marketCap: quote.marketCap ?? null,
+      earningsTimestamp: quote.earningsTimestamp ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Returns the most recent news story for a ticker using Yahoo Finance search (free, no rate limit) */
+export async function getNews(ticker: string): Promise<NewsItem | null> {
+  try {
+    const result = await yf.search(ticker, { newsCount: 5, quotesCount: 0 });
+    const story = ((result.news as any[]) ?? []).find((n: any) => n.type === "STORY");
+    if (!story) return null;
+    return {
+      title: story.title ?? "",
+      publisher: story.publisher ?? "",
+      link: story.link ?? "",
+      publishedAt: story.providerPublishTime ? new Date(story.providerPublishTime) : new Date(),
     };
   } catch {
     return null;
@@ -93,6 +119,67 @@ export async function getIntraday(
         volume: q.volume ?? 0,
       }))
       .sort((a, b) => a.time - b.time);
+  } catch {
+    return [];
+  }
+}
+
+/** Aggregate 30m bars into wider bars (2h = 120min, 4h = 240min) */
+function aggregateBars(bars: IntradayBar[], groupMinutes: number): IntradayBar[] {
+  const groupSec = groupMinutes * 60;
+  const grouped = new Map<number, IntradayBar[]>();
+  bars.forEach((b) => {
+    const key = Math.floor(b.time / groupSec) * groupSec;
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key)!.push(b);
+  });
+  return Array.from(grouped.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([time, grp]) => ({
+      time,
+      open: grp[0].open,
+      high: Math.max(...grp.map((b) => b.high)),
+      low: Math.min(...grp.map((b) => b.low)),
+      close: grp[grp.length - 1].close,
+      volume: grp.reduce((s, b) => s + b.volume, 0),
+    }));
+}
+
+/**
+ * Intraday bars for multi-day ranges (5D / 10D / 1M).
+ * interval: "30m" | "1h" | "2h" | "4h"
+ */
+export async function getIntradayMultiDay(
+  ticker: string,
+  interval: string,
+  calendarDays: number
+): Promise<IntradayBar[]> {
+  const from = new Date();
+  from.setDate(from.getDate() - calendarDays);
+
+  // 2h and 4h are not natively supported by Yahoo — aggregate from 30m
+  const aggMinutes = interval === "4h" ? 240 : interval === "2h" ? 120 : 0;
+  const yfInterval = aggMinutes > 0 ? "30m" : interval === "1h" ? "60m" : "30m";
+
+  try {
+    const result = await yf.chart(ticker, {
+      period1: from,
+      interval: yfInterval as "30m" | "60m",
+    });
+    let bars: IntradayBar[] = ((result.quotes as any[]) ?? [])
+      .filter((q: any) => q.close !== null && q.date !== null)
+      .map((q: any) => ({
+        time: toETSeconds(new Date(q.date)),
+        open: q.open ?? 0,
+        high: q.high ?? 0,
+        low: q.low ?? 0,
+        close: q.close ?? 0,
+        volume: q.volume ?? 0,
+      }))
+      .sort((a: IntradayBar, b: IntradayBar) => a.time - b.time);
+
+    if (aggMinutes > 0) bars = aggregateBars(bars, aggMinutes);
+    return bars;
   } catch {
     return [];
   }

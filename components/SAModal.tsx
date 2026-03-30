@@ -17,11 +17,11 @@ interface Article {
 }
 
 interface SAInfo {
-  quantRating: string | null;
-  analystRating: string | null;
   earningsDays: number | null;
   recentHeadline: string | null;
   newsSentiment: "positive" | "negative" | "neutral" | null;
+  newsUrl: string | null;
+  newsPublisher: string | null;
 }
 
 interface SAModalProps {
