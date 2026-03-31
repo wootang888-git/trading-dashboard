@@ -18,8 +18,12 @@ interface SignalData {
   indicators: {
     rsi14: number;
     volumeRatio: number;
+    upDayVolRatio: number;
     isAboveMa20: boolean;
     isAboveMa50: boolean;
+    emaFanOpen: boolean;
+    emaGapWidening: boolean;
+    rsiInBullZone: boolean;
     atr14: number;
     macd: number;
     macdSignal: number;

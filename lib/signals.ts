@@ -6,11 +6,20 @@ export interface Indicators {
   ma50: number;
   ema8: number;
   ema20: number;
+  // Sprint 1: EMA Fan
+  ema10: number;
+  ema50: number;
+  emaFanOpen: boolean;    // ema10 > ema20 > ema50 (multi-timeframe alignment)
+  emaGapWidening: boolean; // fan expanding = momentum accelerating
   volumeRatio: number;
+  // Sprint 1: Volume Price Analysis
+  upDayVolRatio: number;  // avg up-day vol / avg down-day vol over 20 bars (>1.2 = accumulation)
   priceVs52wHigh: number;
   isAboveMa20: boolean;
   isAboveMa50: boolean;
   isNear52wHigh: boolean;
+  // Sprint 1: RSI Bull Zone
+  rsiInBullZone: boolean; // RSI held 40+ over last 3 bars and current <= 80
   atr14: number;
   macd: number;
   macdSignal: number;
@@ -133,8 +142,10 @@ function calcBollingerBands(bars: HistoricalBar[], period = 20): {
 export function computeIndicators(bars: HistoricalBar[], high52w: number): Indicators {
   const zero: Indicators = {
     rsi14: 50, ma20: 0, ma50: 0, ema8: 0, ema20: 0,
-    volumeRatio: 1, priceVs52wHigh: 0,
+    ema10: 0, ema50: 0, emaFanOpen: false, emaGapWidening: false,
+    volumeRatio: 1, upDayVolRatio: 1, priceVs52wHigh: 0,
     isAboveMa20: false, isAboveMa50: false, isNear52wHigh: false,
+    rsiInBullZone: false,
     atr14: 0, macd: 0, macdSignal: 0, macdHist: 0,
     bbUpper: 0, bbLower: 0, bbWidth: 0, bbPct: 0.5,
   };
@@ -153,11 +164,43 @@ export function computeIndicators(bars: HistoricalBar[], high52w: number): Indic
   const { macd, signal: macdSignal, hist: macdHist } = calcMACD(bars);
   const { upper: bbUpper, lower: bbLower, width: bbWidth, pct: bbPct } = calcBollingerBands(bars);
 
+  // Sprint 1A: EMA Fan (10/20/50 alignment + gap widening)
+  const ema10 = calcEMA(bars, 10);
+  const ema50 = calcEMA(bars, 50);
+  const emaFanOpen = ema10 > ema20 && ema20 > ema50 && ema50 > 0;
+  // Gap widening: compare current (ema10-ema50) spread vs 5 bars ago
+  let emaGapWidening = false;
+  if (bars.length >= 6 && emaFanOpen) {
+    const prevBars = bars.slice(0, -5);
+    const prevEma10 = calcEMA(prevBars, 10);
+    const prevEma50 = calcEMA(prevBars, 50);
+    emaGapWidening = (ema10 - ema50) > (prevEma10 - prevEma50);
+  }
+
+  // Sprint 1B: Volume Price Analysis — up-day vs down-day volume (last 20 bars)
+  const vpaBars = bars.slice(-20);
+  const upDayVols = vpaBars.filter(b => b.close >= b.open).map(b => b.volume);
+  const downDayVols = vpaBars.filter(b => b.close < b.open).map(b => b.volume);
+  const avgUpVol = upDayVols.length > 0 ? upDayVols.reduce((s, v) => s + v, 0) / upDayVols.length : 0;
+  const avgDownVol = downDayVols.length > 0 ? downDayVols.reduce((s, v) => s + v, 0) / downDayVols.length : 1;
+  const upDayVolRatio = avgDownVol > 0 ? avgUpVol / avgDownVol : 1;
+
+  // Sprint 1C: RSI Bull Zone — RSI held >= 40 over last 3 bars, current <= 80
+  let rsiInBullZone = false;
+  if (bars.length >= 4) {
+    const rsi1 = calcRSI(bars.slice(0, -1));
+    const rsi2 = calcRSI(bars.slice(0, -2));
+    rsiInBullZone = rsi14 >= 40 && rsi14 <= 80 && rsi1 >= 40 && rsi2 >= 40;
+  }
+
   return {
-    rsi14, ma20, ma50, ema8, ema20, volumeRatio, priceVs52wHigh,
+    rsi14, ma20, ma50, ema8, ema20,
+    ema10, ema50, emaFanOpen, emaGapWidening,
+    volumeRatio, upDayVolRatio, priceVs52wHigh,
     isAboveMa20: latest.close > ma20,
     isAboveMa50: latest.close > ma50,
     isNear52wHigh: priceVs52wHigh <= 10,
+    rsiInBullZone,
     atr14, macd, macdSignal, macdHist,
     bbUpper, bbLower, bbWidth, bbPct,
   };
@@ -195,6 +238,12 @@ export function scoreMomentumBreakout(
   const macdBullish = ind.macdHist > 0;
   if (macdBullish) score += 1;
 
+  // Sprint 1: EMA fan open = extra confirmation of trend health
+  if (ind.emaFanOpen) score += 1;
+  // Sprint 1: Institutional accumulation signal
+  const accumulating = ind.upDayVolRatio >= 1.2;
+  if (accumulating) score += 1;
+
   const latest = bars[bars.length - 1];
   const entryPrice = latest.high + 0.05;
   const atrStop = ind.atr14 > 0 ? entryPrice - 1.5 * ind.atr14 : latest.low;
@@ -205,10 +254,13 @@ export function scoreMomentumBreakout(
     stopNote: `Stop $${atrStop.toFixed(2)} (1.5× ATR below entry — ATR $${ind.atr14.toFixed(2)})`,
     conditions: [
       { label: "RSI 50–75", met: rsiHealthy || rsiExtended },
+      { label: "RSI bull zone", met: ind.rsiInBullZone },
       { label: "Above MA20", met: ind.isAboveMa20 },
       { label: "Above MA50", met: ind.isAboveMa50 },
+      { label: "EMA fan open", met: ind.emaFanOpen },
       { label: "Near 52w high", met: ind.isNear52wHigh },
       { label: "Volume surge", met: volumeSurge || volumeOk },
+      { label: "Accumulation", met: accumulating },
       { label: "Recent uptrend", met: recentUptrend },
       { label: "MACD bullish", met: macdBullish },
     ],
@@ -258,6 +310,11 @@ export function scoreEMAPullback(
   const macdTurning = ind.macdHist > 0 || (ind.macd < 0 && ind.macdHist > -0.05);
   if (macdTurning) score += 1;
 
+  // Sprint 1: EMA fan open adds extra trend confirmation for pullback entries
+  if (ind.emaFanOpen) score += 1;
+  // Sprint 1: RSI held bull zone = buyers stepping in early on pullback
+  if (ind.rsiInBullZone) score += 1;
+
   const entryPrice = latest.high + 0.05;
   const atrStop = ind.atr14 > 0 ? entryPrice - 1.5 * ind.atr14 : (ind.ema8 > 0 ? ind.ema8 * 0.99 : latest.low);
 
@@ -267,9 +324,11 @@ export function scoreEMAPullback(
     stopNote: `Stop $${atrStop.toFixed(2)} (1.5× ATR below entry — ATR $${ind.atr14.toFixed(2)})`,
     conditions: [
       { label: "8 EMA > 20 EMA", met: emaAligned },
+      { label: "EMA fan open", met: ind.emaFanOpen },
       { label: "Tight to 8 EMA", met: tightToEma },
       { label: "Bounce candle", met: bounceCandle },
       { label: "RSI 40–75", met: rsiHealthy },
+      { label: "RSI bull zone", met: ind.rsiInBullZone },
       { label: "Low pullback vol", met: lowPullbackVol },
       { label: "MACD turning", met: macdTurning },
     ],
@@ -317,6 +376,10 @@ export function scoreMeanReversion(
   if (bbSqueeze) score += 1;
   if (nearLowerBand) score += 1;
 
+  // Sprint 1: Low up/down vol ratio during pullback = distribution not accumulation (good for mean-rev — selling exhausted)
+  const sellingExhausted = ind.upDayVolRatio < 0.8;
+  if (sellingExhausted) score += 1;
+
   const entryPrice = latest.high + 0.05;
   const atrStop = ind.atr14 > 0 ? latest.low - 1.5 * ind.atr14 : latest.low - 0.10;
 
@@ -329,6 +392,7 @@ export function scoreMeanReversion(
       { label: "Below MA20", met: belowMa20 },
       { label: "Above MA50", met: ind.isAboveMa50 },
       { label: "Weak sell vol", met: weakSellVol },
+      { label: "Selling exhausted", met: sellingExhausted },
       { label: "Reversal candle", met: reversalCandle },
       { label: "Near BB lower", met: nearLowerBand },
     ],
@@ -369,6 +433,11 @@ export function scoreETFRotation(
   const macdBullish = ind.macdHist > 0;
   if (macdBullish) score += 1;
 
+  // Sprint 1: EMA fan + gap widening = ETF rotation has real momentum behind it
+  if (ind.emaFanOpen) score += 1;
+  const accumulating = ind.upDayVolRatio >= 1.2;
+  if (accumulating) score += 1;
+
   const entryPrice = latest.close + 0.10;
   const atrStop = ind.atr14 > 0
     ? entryPrice - 1.5 * ind.atr14
@@ -381,8 +450,11 @@ export function scoreETFRotation(
     conditions: [
       { label: "Above MA20", met: ind.isAboveMa20 },
       { label: "Above MA50", met: ind.isAboveMa50 },
+      { label: "EMA fan open", met: ind.emaFanOpen },
       { label: "RSI 50–70", met: rsiHealthy || rsiExtended },
+      { label: "RSI bull zone", met: ind.rsiInBullZone },
       { label: "Volume confirmed", met: volConfirmed },
+      { label: "Accumulation", met: accumulating },
       { label: "Near 52w high", met: nearHigh },
       { label: "MACD bullish", met: macdBullish },
     ],
