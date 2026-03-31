@@ -9,17 +9,25 @@ export interface Indicators {
   // Sprint 1: EMA Fan
   ema10: number;
   ema50: number;
-  emaFanOpen: boolean;    // ema10 > ema20 > ema50 (multi-timeframe alignment)
+  emaFanOpen: boolean;     // ema10 > ema20 > ema50 (multi-timeframe alignment)
   emaGapWidening: boolean; // fan expanding = momentum accelerating
   volumeRatio: number;
   // Sprint 1: Volume Price Analysis
-  upDayVolRatio: number;  // avg up-day vol / avg down-day vol over 20 bars (>1.2 = accumulation)
+  upDayVolRatio: number;   // avg up-day vol / avg down-day vol over 20 bars (>1.2 = accumulation)
   priceVs52wHigh: number;
   isAboveMa20: boolean;
   isAboveMa50: boolean;
   isNear52wHigh: boolean;
   // Sprint 1: RSI Bull Zone
-  rsiInBullZone: boolean; // RSI held 40+ over last 3 bars and current <= 80
+  rsiInBullZone: boolean;  // RSI held 40+ over last 3 bars and current <= 80
+  // Sprint 2: Price Structure (HH/HL)
+  isHigherHighs: boolean;  // recent swing highs are rising
+  isHigherLows: boolean;   // recent swing lows are rising
+  trendStructureIntact: boolean; // both HH and HL = confirmed uptrend
+  // Sprint 2: Relative Strength vs SPY
+  rsVsSpy: number | null;  // (stock 20-bar return) - (SPY 20-bar return), null if no SPY data
+  rsRising: boolean;       // RS ratio higher now than 10 bars ago
+  rsMakingNewHigh: boolean; // RS ratio at 20-bar high
   atr14: number;
   macd: number;
   macdSignal: number;
@@ -137,15 +145,76 @@ function calcBollingerBands(bars: HistoricalBar[], period = 20): {
   return { upper, lower, width, pct };
 }
 
+// ─── Sprint 2 helpers ────────────────────────────────────────────────────────
+
+/** Detect Higher-Highs and Higher-Lows using a simple rolling-window approach.
+ *  Identifies the 3 most recent local swing highs and swing lows in the last
+ *  30 bars, then checks if they are rising. */
+function detectTrendStructure(bars: HistoricalBar[]): {
+  isHigherHighs: boolean; isHigherLows: boolean;
+} {
+  if (bars.length < 10) return { isHigherHighs: false, isHigherLows: false };
+  const window = bars.slice(-30);
+  const swingHighs: number[] = [];
+  const swingLows: number[] = [];
+  // A bar is a local swing high if its high > both neighbours
+  for (let i = 1; i < window.length - 1; i++) {
+    if (window[i].high > window[i - 1].high && window[i].high > window[i + 1].high) {
+      swingHighs.push(window[i].high);
+    }
+    if (window[i].low < window[i - 1].low && window[i].low < window[i + 1].low) {
+      swingLows.push(window[i].low);
+    }
+  }
+  // Need at least 2 swing points to determine direction
+  const isHigherHighs = swingHighs.length >= 2 &&
+    swingHighs[swingHighs.length - 1] > swingHighs[swingHighs.length - 2];
+  const isHigherLows = swingLows.length >= 2 &&
+    swingLows[swingLows.length - 1] > swingLows[swingLows.length - 2];
+  return { isHigherHighs, isHigherLows };
+}
+
+/** Relative Strength vs SPY.
+ *  Returns the stock's 20-bar return minus SPY's 20-bar return (outperformance),
+ *  whether the ratio is rising (vs 10 bars ago), and whether it is at a 20-bar high. */
+function calcRelativeStrength(bars: HistoricalBar[], spyBars: HistoricalBar[]): {
+  rsVsSpy: number; rsRising: boolean; rsMakingNewHigh: boolean;
+} {
+  if (bars.length < 21 || spyBars.length < 21) {
+    return { rsVsSpy: 0, rsRising: false, rsMakingNewHigh: false };
+  }
+  // Build a daily RS ratio series (stock/SPY) aligned by index from the tail
+  const len = Math.min(bars.length, spyBars.length, 21);
+  const stockSlice = bars.slice(-len);
+  const spySlice = spyBars.slice(-len);
+  const ratios = stockSlice.map((b, i) =>
+    spySlice[i].close > 0 ? b.close / spySlice[i].close : 1
+  );
+  const currentRatio = ratios[ratios.length - 1];
+  const ratio10Ago = ratios[Math.max(0, ratios.length - 11)];
+  const rsRising = currentRatio > ratio10Ago;
+  const rsMakingNewHigh = currentRatio >= Math.max(...ratios);
+  // rsVsSpy: stock 20-bar % return minus SPY 20-bar % return
+  const stockReturn = (stockSlice[stockSlice.length - 1].close - stockSlice[0].close) / stockSlice[0].close * 100;
+  const spyReturn = (spySlice[spySlice.length - 1].close - spySlice[0].close) / spySlice[0].close * 100;
+  return { rsVsSpy: stockReturn - spyReturn, rsRising, rsMakingNewHigh };
+}
+
 // ─── computeIndicators ───────────────────────────────────────────────────────
 
-export function computeIndicators(bars: HistoricalBar[], high52w: number): Indicators {
+export function computeIndicators(
+  bars: HistoricalBar[],
+  high52w: number,
+  spyBars: HistoricalBar[] = []
+): Indicators {
   const zero: Indicators = {
     rsi14: 50, ma20: 0, ma50: 0, ema8: 0, ema20: 0,
     ema10: 0, ema50: 0, emaFanOpen: false, emaGapWidening: false,
     volumeRatio: 1, upDayVolRatio: 1, priceVs52wHigh: 0,
     isAboveMa20: false, isAboveMa50: false, isNear52wHigh: false,
     rsiInBullZone: false,
+    isHigherHighs: false, isHigherLows: false, trendStructureIntact: false,
+    rsVsSpy: null, rsRising: false, rsMakingNewHigh: false,
     atr14: 0, macd: 0, macdSignal: 0, macdHist: 0,
     bbUpper: 0, bbLower: 0, bbWidth: 0, bbPct: 0.5,
   };
@@ -193,6 +262,16 @@ export function computeIndicators(bars: HistoricalBar[], high52w: number): Indic
     rsiInBullZone = rsi14 >= 40 && rsi14 <= 80 && rsi1 >= 40 && rsi2 >= 40;
   }
 
+  // Sprint 2A: Price Structure (HH/HL)
+  const { isHigherHighs, isHigherLows } = detectTrendStructure(bars);
+  const trendStructureIntact = isHigherHighs && isHigherLows;
+
+  // Sprint 2B: Relative Strength vs SPY
+  const isSpy = bars === spyBars; // skip RS calculation for SPY itself
+  const rsResult = (!isSpy && spyBars.length >= 21)
+    ? calcRelativeStrength(bars, spyBars)
+    : { rsVsSpy: null as number | null, rsRising: false, rsMakingNewHigh: false };
+
   return {
     rsi14, ma20, ma50, ema8, ema20,
     ema10, ema50, emaFanOpen, emaGapWidening,
@@ -201,6 +280,10 @@ export function computeIndicators(bars: HistoricalBar[], high52w: number): Indic
     isAboveMa50: latest.close > ma50,
     isNear52wHigh: priceVs52wHigh <= 10,
     rsiInBullZone,
+    isHigherHighs, isHigherLows, trendStructureIntact,
+    rsVsSpy: rsResult.rsVsSpy,
+    rsRising: rsResult.rsRising,
+    rsMakingNewHigh: rsResult.rsMakingNewHigh,
     atr14, macd, macdSignal, macdHist,
     bbUpper, bbLower, bbWidth, bbPct,
   };
@@ -243,6 +326,9 @@ export function scoreMomentumBreakout(
   // Sprint 1: Institutional accumulation signal
   const accumulating = ind.upDayVolRatio >= 1.2;
   if (accumulating) score += 1;
+  // Sprint 2: Trend structure and RS bonus
+  if (ind.trendStructureIntact) score += 1;
+  if (ind.rsRising) score += 1;
 
   const latest = bars[bars.length - 1];
   const entryPrice = latest.high + 0.05;
@@ -258,9 +344,12 @@ export function scoreMomentumBreakout(
       { label: "Above MA20", met: ind.isAboveMa20 },
       { label: "Above MA50", met: ind.isAboveMa50 },
       { label: "EMA fan open", met: ind.emaFanOpen },
+      { label: "Higher highs", met: ind.isHigherHighs },
+      { label: "Higher lows", met: ind.isHigherLows },
       { label: "Near 52w high", met: ind.isNear52wHigh },
       { label: "Volume surge", met: volumeSurge || volumeOk },
       { label: "Accumulation", met: accumulating },
+      { label: "RS vs SPY ↑", met: ind.rsRising },
       { label: "Recent uptrend", met: recentUptrend },
       { label: "MACD bullish", met: macdBullish },
     ],
@@ -314,6 +403,10 @@ export function scoreEMAPullback(
   if (ind.emaFanOpen) score += 1;
   // Sprint 1: RSI held bull zone = buyers stepping in early on pullback
   if (ind.rsiInBullZone) score += 1;
+  // Sprint 2: HH/HL confirms trend intact before entering pullback
+  if (ind.trendStructureIntact) score += 1;
+  // Sprint 2: RS rising = this stock leads even during pullback
+  if (ind.rsRising) score += 1;
 
   const entryPrice = latest.high + 0.05;
   const atrStop = ind.atr14 > 0 ? entryPrice - 1.5 * ind.atr14 : (ind.ema8 > 0 ? ind.ema8 * 0.99 : latest.low);
@@ -325,10 +418,13 @@ export function scoreEMAPullback(
     conditions: [
       { label: "8 EMA > 20 EMA", met: emaAligned },
       { label: "EMA fan open", met: ind.emaFanOpen },
+      { label: "Higher highs", met: ind.isHigherHighs },
+      { label: "Higher lows", met: ind.isHigherLows },
       { label: "Tight to 8 EMA", met: tightToEma },
       { label: "Bounce candle", met: bounceCandle },
       { label: "RSI 40–75", met: rsiHealthy },
       { label: "RSI bull zone", met: ind.rsiInBullZone },
+      { label: "RS vs SPY ↑", met: ind.rsRising },
       { label: "Low pullback vol", met: lowPullbackVol },
       { label: "MACD turning", met: macdTurning },
     ],
@@ -379,6 +475,8 @@ export function scoreMeanReversion(
   // Sprint 1: Low up/down vol ratio during pullback = distribution not accumulation (good for mean-rev — selling exhausted)
   const sellingExhausted = ind.upDayVolRatio < 0.8;
   if (sellingExhausted) score += 1;
+  // Sprint 2: HH/HL — for mean reversion we want MA50 trend intact (isHigherLows on longer frame)
+  if (ind.isHigherLows) score += 1;
 
   const entryPrice = latest.high + 0.05;
   const atrStop = ind.atr14 > 0 ? latest.low - 1.5 * ind.atr14 : latest.low - 0.10;
@@ -391,6 +489,7 @@ export function scoreMeanReversion(
       { label: "RSI oversold", met: rsiOversold || rsiRecovering },
       { label: "Below MA20", met: belowMa20 },
       { label: "Above MA50", met: ind.isAboveMa50 },
+      { label: "Higher lows", met: ind.isHigherLows },
       { label: "Weak sell vol", met: weakSellVol },
       { label: "Selling exhausted", met: sellingExhausted },
       { label: "Reversal candle", met: reversalCandle },
@@ -437,6 +536,9 @@ export function scoreETFRotation(
   if (ind.emaFanOpen) score += 1;
   const accumulating = ind.upDayVolRatio >= 1.2;
   if (accumulating) score += 1;
+  // Sprint 2: RS making new high = ETF is a true sector leader right now
+  if (ind.rsMakingNewHigh) score += 1;
+  if (ind.trendStructureIntact) score += 1;
 
   const entryPrice = latest.close + 0.10;
   const atrStop = ind.atr14 > 0
@@ -451,10 +553,13 @@ export function scoreETFRotation(
       { label: "Above MA20", met: ind.isAboveMa20 },
       { label: "Above MA50", met: ind.isAboveMa50 },
       { label: "EMA fan open", met: ind.emaFanOpen },
+      { label: "Higher highs", met: ind.isHigherHighs },
+      { label: "Higher lows", met: ind.isHigherLows },
       { label: "RSI 50–70", met: rsiHealthy || rsiExtended },
       { label: "RSI bull zone", met: ind.rsiInBullZone },
       { label: "Volume confirmed", met: volConfirmed },
       { label: "Accumulation", met: accumulating },
+      { label: "RS new high", met: ind.rsMakingNewHigh },
       { label: "Near 52w high", met: nearHigh },
       { label: "MACD bullish", met: macdBullish },
     ],
@@ -467,9 +572,10 @@ export function buildSignal(
   ticker: string,
   strategy: string,
   bars: HistoricalBar[],
-  high52w: number
+  high52w: number,
+  spyBars: HistoricalBar[] = []
 ): Signal {
-  const ind = computeIndicators(bars, high52w);
+  const ind = computeIndicators(bars, high52w, spyBars);
 
   const { score, entryNote, stopNote, conditions } =
     strategy === "ema_pullback"     ? scoreEMAPullback(ind, bars)

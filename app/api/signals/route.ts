@@ -17,6 +17,9 @@ function sentimentFromTitle(title: string): "positive" | "negative" | "neutral" 
 export async function GET() {
   const watchlist = await getWatchlist();
 
+  // Fetch SPY bars once upfront for RS calculations (Sprint 2)
+  const spyBars = await getHistorical("SPY", 60);
+
   const results = await Promise.all(
     watchlist.map(async ({ ticker, strategy }) => {
       const [quote, bars, news] = await Promise.all([
@@ -26,7 +29,7 @@ export async function GET() {
       ]);
       if (!quote || bars.length === 0) return null;
 
-      const signal = buildSignal(ticker, strategy, bars, quote.high52w);
+      const signal = buildSignal(ticker, strategy, bars, quote.high52w, spyBars);
 
       const earningsDays = quote.earningsTimestamp
         ? Math.ceil((quote.earningsTimestamp.getTime() - Date.now()) / 86400000)

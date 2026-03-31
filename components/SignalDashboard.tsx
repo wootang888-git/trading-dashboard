@@ -24,6 +24,12 @@ interface SignalData {
     emaFanOpen: boolean;
     emaGapWidening: boolean;
     rsiInBullZone: boolean;
+    isHigherHighs: boolean;
+    isHigherLows: boolean;
+    trendStructureIntact: boolean;
+    rsVsSpy: number | null;
+    rsRising: boolean;
+    rsMakingNewHigh: boolean;
     atr14: number;
     macd: number;
     macdSignal: number;

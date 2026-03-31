@@ -8,6 +8,9 @@ export const revalidate = 300;
 async function getInitialData() {
   const watchlist = await getWatchlist();
 
+  // Fetch SPY bars once upfront for RS calculations (Sprint 2)
+  const spyBars = await getHistorical("SPY", 60);
+
   const results = await Promise.all(
     watchlist.map(async ({ ticker, strategy }) => {
       const [quote, bars, news] = await Promise.all([
@@ -16,7 +19,7 @@ async function getInitialData() {
         getNews(ticker),
       ]);
       if (!quote || bars.length === 0) return null;
-      const signal = buildSignal(ticker, strategy, bars, quote.high52w);
+      const signal = buildSignal(ticker, strategy, bars, quote.high52w, spyBars);
 
       const POSITIVE = ["buy", "bullish", "outperform", "upgrade", "strong", "surge", "rally", "beat", "upside", "growth"];
       const NEGATIVE = ["sell", "bearish", "underperform", "downgrade", "weak", "crash", "avoid", "miss", "cut", "risk"];
