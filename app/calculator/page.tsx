@@ -30,7 +30,7 @@ export default function CalculatorPage() {
   const shareCount = valid ? Math.floor(dollarRisk! / riskPerShare!) : null;
   const positionValue = valid ? shareCount! * entryNum : null;
   const portfolioPct = valid ? (positionValue! / accountNum) * 100 : null;
-  const target = valid ? entryNum + 2 * riskPerShare! : null;
+  const target = valid ? entryNum + 3 * riskPerShare! : null;
   const potentialGain = valid ? shareCount! * (target! - entryNum) : null;
 
   const warnings: string[] = [];
@@ -169,7 +169,7 @@ export default function CalculatorPage() {
 
                 <div className="pt-3 space-y-3" style={{ borderTop: "1px solid rgba(60,74,64,0.3)" }}>
                   <div className="flex justify-between text-sm">
-                    <span style={{ color: "var(--on-surface-variant)" }}>Target (2:1 R:R)</span>
+                    <span style={{ color: "var(--on-surface-variant)" }}>Target (3:1 R:R)</span>
                     <span className="font-mono" style={{ color: "#43ed9e" }}>${target!.toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between text-sm">

@@ -21,9 +21,10 @@ export interface Indicators {
   // Sprint 1: RSI Bull Zone
   rsiInBullZone: boolean;  // RSI held 40+ over last 3 bars and current <= 80
   // Sprint 2: Price Structure (HH/HL)
-  isHigherHighs: boolean;  // recent swing highs are rising
-  isHigherLows: boolean;   // recent swing lows are rising
+  isHigherHighs: boolean;       // recent swing highs are rising
+  isHigherLows: boolean;        // recent swing lows are rising
   trendStructureIntact: boolean; // both HH and HL = confirmed uptrend
+  recentSwingLow: number | null; // most recent local swing low price (structural stop anchor)
   // Sprint 2: Relative Strength vs SPY
   rsVsSpy: number | null;  // (stock 20-bar return) - (SPY 20-bar return), null if no SPY data
   rsRising: boolean;       // RS ratio higher now than 10 bars ago
@@ -151,13 +152,12 @@ function calcBollingerBands(bars: HistoricalBar[], period = 20): {
  *  Identifies the 3 most recent local swing highs and swing lows in the last
  *  30 bars, then checks if they are rising. */
 function detectTrendStructure(bars: HistoricalBar[]): {
-  isHigherHighs: boolean; isHigherLows: boolean;
+  isHigherHighs: boolean; isHigherLows: boolean; recentSwingLow: number | null;
 } {
-  if (bars.length < 10) return { isHigherHighs: false, isHigherLows: false };
+  if (bars.length < 10) return { isHigherHighs: false, isHigherLows: false, recentSwingLow: null };
   const window = bars.slice(-30);
   const swingHighs: number[] = [];
   const swingLows: number[] = [];
-  // A bar is a local swing high if its high > both neighbours
   for (let i = 1; i < window.length - 1; i++) {
     if (window[i].high > window[i - 1].high && window[i].high > window[i + 1].high) {
       swingHighs.push(window[i].high);
@@ -166,12 +166,12 @@ function detectTrendStructure(bars: HistoricalBar[]): {
       swingLows.push(window[i].low);
     }
   }
-  // Need at least 2 swing points to determine direction
   const isHigherHighs = swingHighs.length >= 2 &&
     swingHighs[swingHighs.length - 1] > swingHighs[swingHighs.length - 2];
   const isHigherLows = swingLows.length >= 2 &&
     swingLows[swingLows.length - 1] > swingLows[swingLows.length - 2];
-  return { isHigherHighs, isHigherLows };
+  const recentSwingLow = swingLows.length > 0 ? swingLows[swingLows.length - 1] : null;
+  return { isHigherHighs, isHigherLows, recentSwingLow };
 }
 
 /** Relative Strength vs SPY.
@@ -213,7 +213,7 @@ export function computeIndicators(
     volumeRatio: 1, upDayVolRatio: 1, priceVs52wHigh: 0,
     isAboveMa20: false, isAboveMa50: false, isNear52wHigh: false,
     rsiInBullZone: false,
-    isHigherHighs: false, isHigherLows: false, trendStructureIntact: false,
+    isHigherHighs: false, isHigherLows: false, trendStructureIntact: false, recentSwingLow: null,
     rsVsSpy: null, rsRising: false, rsMakingNewHigh: false,
     atr14: 0, macd: 0, macdSignal: 0, macdHist: 0,
     bbUpper: 0, bbLower: 0, bbWidth: 0, bbPct: 0.5,
@@ -263,7 +263,7 @@ export function computeIndicators(
   }
 
   // Sprint 2A: Price Structure (HH/HL)
-  const { isHigherHighs, isHigherLows } = detectTrendStructure(bars);
+  const { isHigherHighs, isHigherLows, recentSwingLow } = detectTrendStructure(bars);
   const trendStructureIntact = isHigherHighs && isHigherLows;
 
   // Sprint 2B: Relative Strength vs SPY
@@ -280,7 +280,7 @@ export function computeIndicators(
     isAboveMa50: latest.close > ma50,
     isNear52wHigh: priceVs52wHigh <= 10,
     rsiInBullZone,
-    isHigherHighs, isHigherLows, trendStructureIntact,
+    isHigherHighs, isHigherLows, trendStructureIntact, recentSwingLow,
     rsVsSpy: rsResult.rsVsSpy,
     rsRising: rsResult.rsRising,
     rsMakingNewHigh: rsResult.rsMakingNewHigh,
@@ -332,12 +332,20 @@ export function scoreMomentumBreakout(
 
   const latest = bars[bars.length - 1];
   const entryPrice = latest.high + 0.05;
-  const atrStop = ind.atr14 > 0 ? entryPrice - 1.5 * ind.atr14 : latest.low;
+  // Technical stop: below recent swing low − 0.5× ATR buffer; fallback to 1.5× ATR from entry
+  const swingStop = ind.recentSwingLow !== null && ind.atr14 > 0
+    ? ind.recentSwingLow - 0.5 * ind.atr14
+    : null;
+  const atrStop = entryPrice - 1.5 * ind.atr14;
+  const stopPrice = swingStop !== null ? Math.max(swingStop, atrStop - ind.atr14) : atrStop;
+  const stopLabel = swingStop !== null
+    ? `Stop $${stopPrice.toFixed(2)} (below swing low $${ind.recentSwingLow!.toFixed(2)} − 0.5× ATR)`
+    : `Stop $${stopPrice.toFixed(2)} (1.5× ATR below entry — ATR $${ind.atr14.toFixed(2)})`;
 
   return {
     score: Math.min(score, 10),
     entryNote: `Buy stop $0.05 above $${latest.high.toFixed(2)} (today's high / resistance)`,
-    stopNote: `Stop $${atrStop.toFixed(2)} (1.5× ATR below entry — ATR $${ind.atr14.toFixed(2)})`,
+    stopNote: stopLabel,
     conditions: [
       { label: "RSI 50–75", met: rsiHealthy || rsiExtended },
       { label: "RSI bull zone", met: ind.rsiInBullZone },
@@ -409,12 +417,24 @@ export function scoreEMAPullback(
   if (ind.rsRising) score += 1;
 
   const entryPrice = latest.high + 0.05;
-  const atrStop = ind.atr14 > 0 ? entryPrice - 1.5 * ind.atr14 : (ind.ema8 > 0 ? ind.ema8 * 0.99 : latest.low);
+  // Technical stop: lower of (8 EMA × 0.985) or (swing low − 0.3× ATR); fallback to ema8 * 0.99
+  const emaStop = ind.ema8 > 0 ? ind.ema8 * 0.985 : null;
+  const swingStop = ind.recentSwingLow !== null && ind.atr14 > 0
+    ? ind.recentSwingLow - 0.3 * ind.atr14
+    : null;
+  const stopPrice = emaStop !== null && swingStop !== null
+    ? Math.min(emaStop, swingStop)
+    : emaStop ?? swingStop ?? (ind.ema8 > 0 ? ind.ema8 * 0.99 : latest.low);
+  const stopLabel = emaStop !== null && swingStop !== null
+    ? `Stop $${stopPrice.toFixed(2)} (lower of 8 EMA ×0.985 $${emaStop.toFixed(2)} or swing low $${ind.recentSwingLow!.toFixed(2)} − 0.3× ATR)`
+    : emaStop !== null
+    ? `Stop $${stopPrice.toFixed(2)} (8 EMA ×0.985 — below 8 EMA = thesis failed)`
+    : `Stop $${stopPrice.toFixed(2)} (below swing low $${ind.recentSwingLow?.toFixed(2) ?? "N/A"} − 0.3× ATR)`;
 
   return {
     score: Math.min(score, 10),
     entryNote: `Buy above $${entryPrice.toFixed(2)} (8 EMA pullback bounce)`,
-    stopNote: `Stop $${atrStop.toFixed(2)} (1.5× ATR below entry — ATR $${ind.atr14.toFixed(2)})`,
+    stopNote: stopLabel,
     conditions: [
       { label: "8 EMA > 20 EMA", met: emaAligned },
       { label: "EMA fan open", met: ind.emaFanOpen },
@@ -479,12 +499,18 @@ export function scoreMeanReversion(
   if (ind.isHigherLows) score += 1;
 
   const entryPrice = latest.high + 0.05;
-  const atrStop = ind.atr14 > 0 ? latest.low - 1.5 * ind.atr14 : latest.low - 0.10;
+  // Technical stop: recent swing low − 1× ATR (wider buffer for volatile mean-reversion names)
+  const stopPrice = ind.recentSwingLow !== null && ind.atr14 > 0
+    ? ind.recentSwingLow - 1.0 * ind.atr14
+    : (ind.atr14 > 0 ? latest.low - ind.atr14 : latest.low - 0.10);
+  const stopLabel = ind.recentSwingLow !== null
+    ? `Stop $${stopPrice.toFixed(2)} (swing low $${ind.recentSwingLow.toFixed(2)} − 1× ATR $${ind.atr14.toFixed(2)})`
+    : `Stop $${stopPrice.toFixed(2)} (1× ATR below candle low — ATR $${ind.atr14.toFixed(2)})`;
 
   return {
     score: Math.min(score, 10),
     entryNote: `Buy above $${entryPrice.toFixed(2)} (above reversal candle high)`,
-    stopNote: `Stop $${atrStop.toFixed(2)} (1.5× ATR below candle low — ATR $${ind.atr14.toFixed(2)})`,
+    stopNote: stopLabel,
     conditions: [
       { label: "RSI oversold", met: rsiOversold || rsiRecovering },
       { label: "Below MA20", met: belowMa20 },
@@ -541,14 +567,16 @@ export function scoreETFRotation(
   if (ind.trendStructureIntact) score += 1;
 
   const entryPrice = latest.close + 0.10;
-  const atrStop = ind.atr14 > 0
-    ? entryPrice - 1.5 * ind.atr14
-    : (ind.ma20 > 0 ? ind.ma20 * 0.99 : latest.low);
+  // Technical stop: close below MA20 = rotation thesis failed
+  const stopPrice = ind.ma20 > 0 ? ind.ma20 * 0.99 : latest.low;
+  const stopLabel = ind.ma20 > 0
+    ? `Stop $${stopPrice.toFixed(2)} (1% below MA20 $${ind.ma20.toFixed(2)} — close below = rotation failed)`
+    : `Stop $${stopPrice.toFixed(2)} (below recent low)`;
 
   return {
     score: Math.min(score, 10),
     entryNote: `Buy above $${entryPrice.toFixed(2)} (confirmation above current close)`,
-    stopNote: `Stop $${atrStop.toFixed(2)} (1.5× ATR below entry — ATR $${ind.atr14.toFixed(2)})`,
+    stopNote: stopLabel,
     conditions: [
       { label: "Above MA20", met: ind.isAboveMa20 },
       { label: "Above MA50", met: ind.isAboveMa50 },
