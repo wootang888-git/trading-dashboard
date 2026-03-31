@@ -5,6 +5,13 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import SAModal from "./SAModal";
 import StockChart from "./StockChart";
 
+/** Extracts the first dollar amount from a note string */
+function parseFirstPrice(note: string): number | null {
+  const matches = note.match(/\$(\d+(?:\.\d+)?)/g);
+  if (!matches || matches.length === 0) return null;
+  return parseFloat(matches[0].replace("$", ""));
+}
+
 /** Extracts the last dollar amount from a note string */
 function parseLastPrice(note: string): number | null {
   const matches = note.match(/\$(\d+(?:\.\d+)?)/g);
@@ -102,9 +109,9 @@ export default function SignalCard({
   const changeSign = changePositive ? "+" : "";
 
   const entryPrice = parseLastPrice(entryNote);
-  const stopPrice = parseLastPrice(stopNote);
+  const stopPrice = parseFirstPrice(stopNote);
   const risk = entryPrice && stopPrice ? Math.abs(entryPrice - stopPrice) : null;
-  const targetPrice = entryPrice && risk ? entryPrice + 2 * risk : null;
+  const targetPrice = entryPrice && risk ? entryPrice + 3 * risk : null;
   const earningsWarning = sa?.earningsDays !== null && sa?.earningsDays !== undefined && sa.earningsDays <= 7;
 
   const badge = signalBadge(strength);
