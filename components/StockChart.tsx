@@ -25,6 +25,21 @@ function calcEMAFromBars(bars: Bar[], period: number): number[] {
   return bars.map((b) => { ema = b.close * k + ema * (1 - k); return ema; });
 }
 
+/** Calculate Bollinger Bands (20-period SMA ± 2 std dev) from bar close prices */
+function calcBBFromBars(bars: Bar[], period = 20): { upper: number[]; lower: number[] } {
+  const upper: number[] = [];
+  const lower: number[] = [];
+  for (let i = 0; i < bars.length; i++) {
+    const slice = bars.slice(Math.max(0, i - period + 1), i + 1).map((b) => b.close);
+    const mean = slice.reduce((s, v) => s + v, 0) / slice.length;
+    const variance = slice.reduce((s, v) => s + (v - mean) ** 2, 0) / slice.length;
+    const std = Math.sqrt(variance);
+    upper.push(mean + 2 * std);
+    lower.push(mean - 2 * std);
+  }
+  return { upper, lower };
+}
+
 
 type Range = "1d" | "5d" | "10d" | "1mo";
 type IntradayInterval = "1m" | "2m" | "5m" | "15m" | "30m" | "1h";
@@ -76,9 +91,7 @@ export default function StockChart({
   const [isIntraday, setIsIntraday] = useState(false);
   const [loading, setLoading] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
-  const [showFib, setShowFib] = useState(false);
-  const [fibHigh, setFibHigh] = useState("");
-  const [fibLow, setFibLow] = useState("");
+  const [showBB, setShowBB] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -259,41 +272,32 @@ export default function StockChart({
       ema20Series.setData(bars.map((b, i) => ({ time: b.time as any, value: ema20Values[i] })));
     }
 
-    // ── Fibonacci retracement (user-anchored, labels on LEFT axis) ──
-    const fh = parseFloat(fibHigh);
-    const fl = parseFloat(fibLow);
-    if (fh > 0 && fl > 0 && fh > fl) {
-      // Attach fib price lines to a hidden series on the LEFT price scale so
-      // labels appear on the left (absolute $) axis, keeping the right (%) axis clear.
-      const fibAnchor = chart.addSeries(LineSeries, {
-        priceScaleId: "left",
-        color: "transparent",
+    // ── Bollinger Bands (20-period SMA ± 2 std dev, daily only) ──
+    if (!isIntraday && showBB && bars.length >= 20) {
+      const { upper, lower } = calcBBFromBars(bars);
+      const bbUpperSeries = chart.addSeries(LineSeries, {
+        color: "rgba(139,92,246,0.5)",
         lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
         priceLineVisible: false,
         lastValueVisible: false,
         crosshairMarkerVisible: false,
+        title: "BB+",
       });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      fibAnchor.setData(bars.map((b) => ({ time: b.time as any, value: fh })));
+      bbUpperSeries.setData(bars.map((b, i) => ({ time: b.time as any, value: upper[i] })));
 
-      const fibRange = fh - fl;
-      [
-        { pct: 0.236, label: "23.6%" },
-        { pct: 0.382, label: "38.2%" },
-        { pct: 0.500, label: "50.0%" },
-        { pct: 0.618, label: "61.8%" },
-        { pct: 0.786, label: "78.6%" },
-      ].forEach(({ pct, label }) => {
-        const price = fh - pct * fibRange;
-        fibAnchor.createPriceLine({
-          price,
-          color: `rgba(200,168,75,${pct < 0.4 || pct > 0.7 ? 0.5 : 0.85})`,
-          lineWidth: 1,
-          lineStyle: LineStyle.Dotted,
-          axisLabelVisible: true,
-          title: `${label} $${price.toFixed(2)}`,
-        });
+      const bbLowerSeries = chart.addSeries(LineSeries, {
+        color: "rgba(139,92,246,0.5)",
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+        title: "BB−",
       });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      bbLowerSeries.setData(bars.map((b, i) => ({ time: b.time as any, value: lower[i] })));
     }
 
     chart.timeScale().fitContent();
@@ -328,7 +332,7 @@ export default function StockChart({
       chart.remove();
       chartRef.current = null;
     };
-  }, [bars, entryPrice, stopPrice, targetPrice, isIntraday, fibHigh, fibLow]);
+  }, [bars, entryPrice, stopPrice, targetPrice, isIntraday, showBB]);
 
   // Resize observer
   useEffect(() => {
@@ -379,24 +383,19 @@ export default function StockChart({
         </div>
         <div className="flex items-center gap-2">
           {loading && <RefreshCw size={10} className="animate-spin text-gray-500" />}
-          <button
-            onClick={() => {
-              setShowFib((v) => {
-                if (v) { setFibHigh(""); setFibLow(""); }
-                return !v;
-              });
-            }}
-            className={`text-xs px-1.5 py-0.5 rounded transition-colors ${
-              showFib && fibHigh && fibLow
-                ? "bg-yellow-900/60 text-yellow-300 border border-yellow-800"
-                : showFib
-                ? "bg-gray-700 text-gray-300"
-                : "text-gray-500 hover:text-gray-300"
-            }`}
-            title="Fibonacci retracement tool"
-          >
-            Fib
-          </button>
+          {!isIntraday && (
+            <button
+              onClick={() => setShowBB((v) => !v)}
+              className={`text-xs px-1.5 py-0.5 rounded transition-colors ${
+                showBB
+                  ? "bg-purple-900/60 text-purple-300 border border-purple-800"
+                  : "text-gray-500 hover:text-gray-300"
+              }`}
+              title="Toggle Bollinger Bands (20-period ±2σ)"
+            >
+              BB
+            </button>
+          )}
           <button
             onClick={() => setFullscreen((f) => !f)}
             className="text-gray-500 hover:text-white transition-colors p-0.5"
@@ -447,40 +446,6 @@ export default function StockChart({
         </div>
       )}
 
-      {/* Fib anchor inputs */}
-      {showFib && (
-        <div className="flex items-center gap-2 mb-1.5 text-xs">
-          <span className="text-yellow-600 font-medium">Fib</span>
-          <label className="flex items-center gap-1 text-gray-500">
-            High $
-            <input
-              type="number"
-              value={fibHigh}
-              onChange={(e) => setFibHigh(e.target.value)}
-              placeholder="0.00"
-              className="w-20 bg-gray-800 text-white border border-gray-700 rounded px-1.5 py-0.5 text-xs focus:outline-none focus:border-yellow-700"
-            />
-          </label>
-          <label className="flex items-center gap-1 text-gray-500">
-            Low $
-            <input
-              type="number"
-              value={fibLow}
-              onChange={(e) => setFibLow(e.target.value)}
-              placeholder="0.00"
-              className="w-20 bg-gray-800 text-white border border-gray-700 rounded px-1.5 py-0.5 text-xs focus:outline-none focus:border-yellow-700"
-            />
-          </label>
-          {(fibHigh || fibLow) && (
-            <button
-              onClick={() => { setFibHigh(""); setFibLow(""); }}
-              className="text-gray-600 hover:text-gray-400 transition-colors"
-            >
-              Clear
-            </button>
-          )}
-        </div>
-      )}
 
       {/* Chart + OHLC tooltip */}
       <div className="relative">
@@ -528,10 +493,10 @@ export default function StockChart({
             </span>
           </>
         )}
-        {parseFloat(fibHigh) > parseFloat(fibLow) && parseFloat(fibLow) > 0 && (
+        {!isIntraday && showBB && (
           <span className="flex items-center gap-1.5">
-            <span className="inline-block w-4 border-t border-dotted border-[#c8a84b]" />
-            Fib {fibHigh}–{fibLow}
+            <span className="inline-block w-4 border-t border-dashed border-purple-400 opacity-50" />
+            BB ±2σ
           </span>
         )}
         {rr && (
