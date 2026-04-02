@@ -37,6 +37,8 @@ type BacktestSummary = {
   avgLossPct: number;
   totalRisked: number;
   averageHoldDays: number;
+  topConvictionTickers: Array<{ ticker: string; pnl: number; pnlPct: number; winRate: number; resultsCount: number; avgHoldDays: number; convictionScore: number }>;
+  bestPerformers: Array<{ ticker: string; pnl: number; pnlPct: number; winRate: number; resultsCount: number; avgHoldDays: number; convictionScore: number }>;
   switchCountsPerTicker: Record<string, { tradeToWatch: number; watchToTrade: number; totalSwitches: number }>;
   switchDistribution: Array<{ switches: number; count: number }>;
 };
@@ -86,7 +88,7 @@ export default function BacktestPage() {
   const [includeMode, setIncludeMode] = useState<IncludeMode>("both");
   const [minScore, setMinScore] = useState(4);
   const [topN, setTopN] = useState(3);
-  const [trendFilter, setTrendFilter] = useState(false);
+  const [trendFilter, setTrendFilter] = useState(true);
   const [requireBreakout, setRequireBreakout] = useState(false);
   const [maxEntryGapPct, setMaxEntryGapPct] = useState(5);
   const [minHoldDays, setMinHoldDays] = useState(0);
@@ -239,11 +241,13 @@ export default function BacktestPage() {
             </select>
             <p className="text-[10px] text-slate-400 mt-1">Trade: strong signal score, Watch: 82% fib alert.</p>
           </label>
-            <label className="text-xs text-slate-200">Min score (higher =&gt; fewer signals)
+          <label className="text-xs text-slate-200">Min score (higher = fewer signals)
             <input value={minScore} onChange={(e) => setMinScore(Number(e.target.value))} type="number" min={1} max={10} className="w-full rounded bg-[#1c2c28] border border-[#3f5b51] mt-1 p-2 text-sm" />
+            <p className="text-[10px] text-slate-400 mt-1">Minimum signal confidence needed to treat a setup as high conviction. 4-6 is typical for swing trading.</p>
           </label>
           <label className="text-xs text-slate-200">Top N signals (journal pick)
             <input value={topN} onChange={(e) => setTopN(Number(e.target.value))} type="number" min={1} max={10} className="w-full rounded bg-[#1c2c28] border border-[#3f5b51] mt-1 p-2 text-sm" />
+            <p className="text-[10px] text-slate-400 mt-1">Ranks watchlist tickers by conviction score and keeps the top N setups. Think of it as your journal pick of strongest entries.</p>
           </label>
           <label className="text-xs text-slate-200">Trend filter (MA20 &gt; MA50)
             <input type="checkbox" checked={trendFilter} onChange={(e) => setTrendFilter(e.target.checked)} className="ml-2" />
@@ -253,24 +257,29 @@ export default function BacktestPage() {
           </label>
           <label className="text-xs text-slate-200">Max entry gap %
             <input value={maxEntryGapPct} onChange={(e) => setMaxEntryGapPct(Number(e.target.value))} type="number" min={0} max={20} step={0.5} className="w-full rounded bg-[#1c2c28] border border-[#3f5b51] mt-1 p-2 text-sm" />
+            <p className="text-[10px] text-slate-400 mt-1">Skip trades where the next open jumps more than this percentage from signal close, reducing gap risk.</p>
           </label>
           <label className="text-xs text-slate-200">Min hold days
             <input value={minHoldDays} onChange={(e) => setMinHoldDays(Number(e.target.value))} type="number" min={0} max={20} className="w-full rounded bg-[#1c2c28] border border-[#3f5b51] mt-1 p-2 text-sm" />
+            <p className="text-[10px] text-slate-400 mt-1">Minimum days to hold a trade before considering exit rules, helps avoid noise exits.</p>
           </label>
           <label className="text-xs text-slate-200">Fixed shares
             <input value={fixedShares} onChange={(e) => setFixedShares(Number(e.target.value))} type="number" min={1} max={1000} className="w-full rounded bg-[#1c2c28] border border-[#3f5b51] mt-1 p-2 text-sm" />
           </label>
           <label className="text-xs text-slate-200">ATR period
             <input value={atrPeriod} onChange={(e) => setAtrPeriod(Number(e.target.value))} type="number" min={5} max={30} className="w-full rounded bg-[#1c2c28] border border-[#3f5b51] mt-1 p-2 text-sm" />
+            <p className="text-[10px] text-slate-400 mt-1">Volatility window used for stop distance. Higher value smooths movement and gives wider stops.</p>
           </label>
           <label className="text-xs text-slate-200">Target multiplier (R)
             <input value={tpMultiplier} onChange={(e) => setTpMultiplier(Number(e.target.value))} type="number" min={1} max={3} step={0.1} className="w-full rounded bg-[#1c2c28] border border-[#3f5b51] mt-1 p-2 text-sm" />
+            <p className="text-[10px] text-slate-400 mt-1">Set profit target as multiples of your risk (e.g., 1.5 for 1.5:1 reward:risk).</p>
           </label>
           <label className="text-xs text-slate-200">Max hold days
             <input value={maxHoldDays} onChange={(e) => setMaxHoldDays(Number(e.target.value))} type="number" min={5} max={90} className="w-full rounded bg-[#1c2c28] border border-[#3f5b51] mt-1 p-2 text-sm" />
           </label>
           <label className="text-xs text-slate-200">Auto sweep run
             <input type="checkbox" checked={sweepMode} onChange={(e) => setSweepMode(e.target.checked)} className="ml-2" />
+            <p className="text-[10px] text-slate-400 mt-1">Runs multiple configuration variations automatically and shows best strategies in one result.</p>
           </label>
           <label className="text-xs text-slate-200">Schedule auto sweep daily
             <input type="checkbox" checked={scheduleSweep} onChange={(e) => setScheduleSweep(e.target.checked)} className="ml-2" />
@@ -356,29 +365,61 @@ export default function BacktestPage() {
           )}
 
           <div className="mt-4">
-            <h3 className="text-sm font-semibold mb-2">Switch counts per ticker</h3>
-            <div className="overflow-x-auto rounded border border-[#2f4340]">
+            <h3 className="text-sm font-semibold mb-2">Top 5 Conviction Tickers</h3>
+            <div className="overflow-x-auto rounded border border-[#2f4340] mb-4">
               <table className="w-full text-xs text-left border-collapse">
                 <thead>
                   <tr>
                     <th className="px-2 py-1 border border-[#2f4340]">Ticker</th>
-                    <th className="px-2 py-1 border border-[#2f4340]">Trade→Watch</th>
-                    <th className="px-2 py-1 border border-[#2f4340]">Watch→Trade</th>
-                    <th className="px-2 py-1 border border-[#2f4340]">Total switches</th>
+                    <th className="px-2 py-1 border border-[#2f4340]">Conviction Score</th>
+                    <th className="px-2 py-1 border border-[#2f4340]">PnL ($)</th>
+                    <th className="px-2 py-1 border border-[#2f4340]">Avg % per trade</th>
+                    <th className="px-2 py-1 border border-[#2f4340]">Win Rate</th>
+                    <th className="px-2 py-1 border border-[#2f4340]">Trades</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {Object.entries(result.summary.switchCountsPerTicker).map(([ticker, stats]) => (
-                    <tr key={ticker} className="hover:bg-[#162d2a]">
-                      <td className="px-2 py-1 border border-[#2f4340]">{ticker}</td>
-                      <td className="px-2 py-1 border border-[#2f4340]">{stats.tradeToWatch}</td>
-                      <td className="px-2 py-1 border border-[#2f4340]">{stats.watchToTrade}</td>
-                      <td className="px-2 py-1 border border-[#2f4340]">{stats.totalSwitches}</td>
+                  {result.summary.topConvictionTickers.map((item) => (
+                    <tr key={item.ticker} className="hover:bg-[#162d2a]">
+                      <td className="px-2 py-1 border border-[#2f4340]">{item.ticker}</td>
+                      <td className="px-2 py-1 border border-[#2f4340]">{item.convictionScore.toFixed(1)}</td>
+                      <td className="px-2 py-1 border border-[#2f4340]">{item.pnl.toFixed(2)}</td>
+                      <td className="px-2 py-1 border border-[#2f4340]">{item.pnlPct.toFixed(2)}%</td>
+                      <td className="px-2 py-1 border border-[#2f4340]">{fmPercent(item.winRate)}</td>
+                      <td className="px-2 py-1 border border-[#2f4340]">{item.resultsCount}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+
+            <h3 className="text-sm font-semibold mb-2">Best Performers (by % gain)</h3>
+            <div className="overflow-x-auto rounded border border-[#2f4340]">
+              <table className="w-full text-xs text-left border-collapse">
+                <thead>
+                  <tr>
+                    <th className="px-2 py-1 border border-[#2f4340]">Ticker</th>
+                    <th className="px-2 py-1 border border-[#2f4340]">Perf %</th>
+                    <th className="px-2 py-1 border border-[#2f4340]">PnL ($)</th>
+                    <th className="px-2 py-1 border border-[#2f4340]">Win Rate</th>
+                    <th className="px-2 py-1 border border-[#2f4340]">Trades</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.summary.bestPerformers.map((item) => (
+                    <tr key={item.ticker} className="hover:bg-[#162d2a]">
+                      <td className="px-2 py-1 border border-[#2f4340]">{item.ticker}</td>
+                      <td className="px-2 py-1 border border-[#2f4340]">{item.pnlPct.toFixed(2)}%</td>
+                      <td className="px-2 py-1 border border-[#2f4340]">{item.pnl.toFixed(2)}</td>
+                      <td className="px-2 py-1 border border-[#2f4340]">{fmPercent(item.winRate)}</td>
+                      <td className="px-2 py-1 border border-[#2f4340]">{item.resultsCount}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-2 text-xs text-slate-400">Each ticker is ranked by signal conviction and outcome performance; a higher conviction score means stronger trade agreement. Best performers are by % gain among executed trades.</div>
           </div>
         </section>
       )}

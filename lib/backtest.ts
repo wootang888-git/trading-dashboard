@@ -373,6 +373,16 @@ export interface WatchlistBacktestConfig {
   minHoldDays?: number;    // enforce minimum days to hold before exit logic applies
 }
 
+export interface WatchlistTickerPerformance {
+  ticker: string;
+  pnl: number;
+  pnlPct: number;
+  winRate: number;
+  resultsCount: number;
+  avgHoldDays: number;
+  convictionScore: number;
+}
+
 export interface WatchlistBacktestResult {
   signals: WatchlistSignalSnapshot[];
   trades: TradeResult[];
@@ -389,6 +399,8 @@ export interface WatchlistBacktestResult {
     avgLossPct: number;
     totalRisked: number;
     averageHoldDays: number;
+    topConvictionTickers: WatchlistTickerPerformance[];
+    bestPerformers: WatchlistTickerPerformance[];
     switchCountsPerTicker: Record<string, { tradeToWatch: number; watchToTrade: number; totalSwitches: number }>;
     switchDistribution: Array<{ switches: number; count: number }>;
   };
@@ -695,6 +707,56 @@ export async function runWatchlistBacktest(
   const avgWinPct = trades.filter((t) => t.win).reduce((s, t) => s + t.pnlPct, 0) / Math.max(1, wins);
   const avgLossPct = trades.filter((t) => !t.win).reduce((s, t) => s + t.pnlPct, 0) / Math.max(1, losses);
   const avgHoldDays = trades.reduce((s, t) => s + t.holdDays, 0) / Math.max(1, trades.length);
+
+  const tickerStats: Record<string, { totalPnl: number; totalPnlPct: number; win: number; total: number; totalHoldDays: number; maxConviction: number; }> = {};
+  for (const tr of trades) {
+    const stats = tickerStats[tr.ticker] ?? { totalPnl: 0, totalPnlPct: 0, win: 0, total: 0, totalHoldDays: 0, maxConviction: 0 };
+    stats.totalPnl += tr.pnl;
+    stats.totalPnlPct += tr.pnlPct;
+    if (tr.win) stats.win += 1;
+    stats.total += 1;
+    stats.totalHoldDays += tr.holdDays;
+    const signal = signalCandidates.find((s) => s.ticker === tr.ticker && s.signalDate === tr.signalDate);
+    if (signal && signal.convictionScore > stats.maxConviction) {
+      stats.maxConviction = signal.convictionScore;
+    }
+    tickerStats[tr.ticker] = stats;
+  }
+
+  // include tickers that had signals but no executed trades as well
+  for (const s of signalCandidates) {
+    if (!tickerStats[s.ticker]) {
+      tickerStats[s.ticker] = {
+        totalPnl: 0,
+        totalPnlPct: 0,
+        win: 0,
+        total: 0,
+        totalHoldDays: 0,
+        maxConviction: s.convictionScore,
+      };
+    } else {
+      tickerStats[s.ticker].maxConviction = Math.max(tickerStats[s.ticker].maxConviction, s.convictionScore);
+    }
+  }
+
+  const perTicker = Object.entries(tickerStats).map(([ticker, stats]) => ({
+    ticker,
+    pnl: stats.totalPnl,
+    pnlPct: stats.total > 0 ? stats.totalPnlPct / stats.total : 0,
+    winRate: stats.total > 0 ? stats.win / stats.total : 0,
+    resultsCount: stats.total,
+    avgHoldDays: stats.total > 0 ? stats.totalHoldDays / stats.total : 0,
+    convictionScore: stats.maxConviction,
+  }));
+
+  const topConvictionTickers = [...perTicker]
+    .sort((a, b) => b.convictionScore - a.convictionScore || b.pnl - a.pnl)
+    .slice(0, 5);
+
+  const bestPerformers = [...perTicker]
+    .sort((a, b) => b.pnlPct - a.pnlPct || b.pnl - a.pnl)
+    .slice(0, 5);
+
   const switchCountsPerTicker = transitionStats;
   const switchDistributionMap = new Map<number, number>();
   for (const tickerStats of Object.values(transitionStats)) {
@@ -721,6 +783,8 @@ export async function runWatchlistBacktest(
       avgLossPct,
       totalRisked,
       averageHoldDays: avgHoldDays,
+      topConvictionTickers,
+      bestPerformers,
       switchCountsPerTicker,
       switchDistribution,
     },
