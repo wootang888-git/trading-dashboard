@@ -6,6 +6,41 @@ export interface WatchlistEntry {
   strategy: Strategy;
 }
 
+// Maps each ticker to its primary sector ETF for relative strength comparison.
+// Sector RS vs SPY tells you if the stock is outperforming the broad market;
+// sector RS tells you if it's leading within its own industry group.
+export const SECTOR_ETF: Record<string, string> = {
+  // Tech / Software
+  META:  "XLK",
+  GOOGL: "XLK",
+  NVDA:  "XLK",
+  ARM:   "XLK",
+  APP:   "XLK",
+  FTNT:  "XLK",
+  PANW:  "XLK",
+  MU:    "XLK",
+  IREN:  "XLK",
+  NBIS:  "XLK",
+  PLTR:  "XLK",
+  // Space / Aerospace & Defense
+  RKLB:  "ITA",
+  ASTS:  "ITA",
+  LUNR:  "ITA",
+  RTX:   "ITA",
+  // Energy
+  USO:   "XLE",
+  XOM:   "XLE",
+  FANG:  "XLE",
+  NLR:   "XLE",
+  // Fintech / Finance
+  SOFI:  "XLF",
+  // Crypto-adjacent
+  MSTR:  "QQQ",
+  // Broad market ETFs — compare vs themselves (no sector drift)
+  SPY:   "SPY",
+  QQQ:   "QQQ",
+};
+
 // Static fallback — used when Supabase is unavailable or empty
 export const WATCHLIST: WatchlistEntry[] = [
   // Tech / Growth

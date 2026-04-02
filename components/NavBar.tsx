@@ -7,6 +7,7 @@ const tabs = [
   { href: "/", label: "Dashboard" },
   { href: "/journal", label: "Journal" },
   { href: "/watchlist", label: "Watchlist" },
+  { href: "/backtest", label: "Backtest Simulation" },
   { href: "/calculator", label: "Calculator" },
 ];
 
@@ -14,8 +15,8 @@ export default function NavBar() {
   const pathname = usePathname();
   return (
     <header
-      className="sticky top-0 z-40 border-b border-[#3c4a40]/20"
-      style={{ backgroundColor: "var(--surface-container-low)" }}
+      className="sticky top-0 z-40 border-b border-[#3c4a40]/30 backdrop-blur-md"
+      style={{ backgroundColor: "#0e141af2" }}
     >
       <div className="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
         <span

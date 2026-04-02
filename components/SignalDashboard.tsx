@@ -1,12 +1,22 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import MarketBanner from "./MarketBanner";
 import SignalCard from "./SignalCard";
 import CalculatorModal from "./CalculatorModal";
 import { RefreshCw } from "lucide-react";
 
 const REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes
+const TRADE_THRESHOLD = 82;  // Gate 1: pull the trigger
+const WATCH_THRESHOLD = 70;  // Gate 2: set an alert
+
+interface ValidationResult {
+  passed: boolean;
+  conflictPenalty: number;
+  dataQualityPts: number;
+  notes: string[];
+  checked_at: string;
+}
 
 interface SignalData {
   ticker: string;
@@ -15,6 +25,10 @@ interface SignalData {
   strategy: string;
   price: number;
   changePct: number;
+  convictionScore: number;
+  convictionBand: "high" | "medium" | "low";
+  sectorRs: number | null;
+  validation: ValidationResult;
   indicators: {
     rsi14: number;
     volumeRatio: number;
@@ -41,6 +55,8 @@ interface SignalData {
   };
   entryNote: string;
   stopNote: string;
+  entryPrice: number;
+  stopPrice: number;
   conditions?: { label: string; met: boolean }[];
   sa?: {
     earningsDays: number | null;
@@ -63,11 +79,33 @@ interface CalcState {
   stop: number | null;
 }
 
+/** Request browser notification permission once on mount. */
+function useNotificationPermission() {
+  useEffect(() => {
+    if (typeof Notification !== "undefined" && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
+}
+
+/** Fire a browser notification if the browser supports it and permission is granted. */
+function notify(title: string, body: string) {
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+  new Notification(title, { body, icon: "/favicon.ico" });
+}
+
 export default function SignalDashboard({ initial }: { initial: DashboardData }) {
   const [data, setData] = useState<DashboardData>(initial);
   const [loading, setLoading] = useState(false);
   const [countdown, setCountdown] = useState(REFRESH_INTERVAL / 1000);
   const [calc, setCalc] = useState<CalcState>({ open: false, entry: null, stop: null });
+
+  // Track previous conviction scores to detect Watch→Trade crossings
+  const prevScores = useRef<Map<string, number>>(
+    new Map(initial.signals.map((s) => [s.ticker, s.convictionScore]))
+  );
+
+  useNotificationPermission();
 
   const openCalc = useCallback((entry?: number | null, stop?: number | null) => {
     setCalc({ open: true, entry: entry ?? null, stop: stop ?? null });
@@ -81,7 +119,24 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
     setLoading(true);
     try {
       const res = await fetch("/api/signals", { cache: "no-store" });
-      if (res.ok) setData(await res.json());
+      if (!res.ok) return;
+      const newData: DashboardData = await res.json();
+
+      // Check for Watch→Trade crossings and fire browser notifications
+      for (const signal of newData.signals) {
+        const prev = prevScores.current.get(signal.ticker) ?? 0;
+        const curr = signal.convictionScore;
+        // Was below trade threshold, now at or above it
+        if (prev < TRADE_THRESHOLD && curr >= TRADE_THRESHOLD) {
+          notify(
+            `${signal.ticker} crossed Trade threshold`,
+            `Conviction ${curr}/100 — ${signal.strategy.replace(/_/g, " ")} setup. Entry: $${signal.entryPrice?.toFixed(2) ?? "–"}`
+          );
+        }
+      }
+      // Update previous scores map
+      prevScores.current = new Map(newData.signals.map((s) => [s.ticker, s.convictionScore]));
+      setData(newData);
     } finally {
       setLoading(false);
       setCountdown(REFRESH_INTERVAL / 1000);
@@ -100,9 +155,9 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
     return () => clearInterval(tick);
   }, []);
 
-  const strong = data.signals.filter((s) => s.score >= 8);
-  const moderate = data.signals.filter((s) => s.score >= 5 && s.score < 8);
-  const watch = data.signals.filter((s) => s.score < 5);
+  const trade = data.signals.filter((s) => s.convictionScore >= TRADE_THRESHOLD);
+  const watch = data.signals.filter((s) => s.convictionScore >= WATCH_THRESHOLD && s.convictionScore < TRADE_THRESHOLD);
+  const observe = data.signals.filter((s) => s.convictionScore < WATCH_THRESHOLD);
 
   const updatedTime = new Date(data.updatedAt).toLocaleTimeString("en-US", {
     hour: "numeric",
@@ -122,7 +177,8 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
       <div className="flex items-center gap-2 flex-wrap">
         {[
           { label: `${data.signals.length} Signals` },
-          { label: `${strong.length} Strong`, color: "#43ed9e" },
+          { label: `${trade.length} Trade`, color: "#43ed9e" },
+          { label: `${watch.length} Watch`, color: "#c8a84b" },
           {
             label:
               data.marketCondition === "bull" ? "Bull Market"
@@ -170,42 +226,45 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
         </div>
       </div>
 
-      {/* Strong signals */}
-      {strong.length > 0 && (
+      {/* Trade signals (≥82) */}
+      {trade.length > 0 && (
         <section>
           <h2 className="text-sm font-semibold uppercase tracking-widest mb-3" style={sectionHead("#43ed9e")}>
-            Strong Setups ({strong.length})
+            Trade — High Conviction ({trade.length})
           </h2>
           <div className="space-y-3">
-            {strong.map((s) => (
+            {trade.map((s) => (
               <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} />
             ))}
           </div>
         </section>
       )}
 
-      {/* Moderate signals */}
-      {moderate.length > 0 && (
-        <section>
-          <h2 className="text-sm font-semibold uppercase tracking-widest mb-3" style={sectionHead("#c8a84b")}>
-            Moderate Setups ({moderate.length})
-          </h2>
-          <div className="space-y-3">
-            {moderate.map((s) => (
-              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Watch list */}
+      {/* Watch signals (70–81) — alert when they cross 82 */}
       {watch.length > 0 && (
         <section>
-          <h2 className="text-sm font-semibold uppercase tracking-widest mb-3" style={sectionHead("var(--on-surface-variant)")}>
-            Watching ({watch.length})
+          <h2 className="text-sm font-semibold uppercase tracking-widest mb-1" style={sectionHead("#c8a84b")}>
+            Watch — Alert at {TRADE_THRESHOLD} ({watch.length})
           </h2>
+          <p className="text-[10px] mb-3" style={{ color: "var(--on-surface-variant)" }}>
+            Browser notification fires automatically when any of these cross {TRADE_THRESHOLD}.
+          </p>
           <div className="space-y-3">
             {watch.map((s) => (
+              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Observe (<70) */}
+      {observe.length > 0 && (
+        <section>
+          <h2 className="text-sm font-semibold uppercase tracking-widest mb-3" style={sectionHead("var(--on-surface-variant)")}>
+            Observe ({observe.length})
+          </h2>
+          <div className="space-y-3">
+            {observe.map((s) => (
               <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} />
             ))}
           </div>

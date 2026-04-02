@@ -1,25 +1,39 @@
 import SignalDashboard from "@/components/SignalDashboard";
 import { getWatchlist } from "@/lib/supabase";
-import { getQuote, getHistorical, getNews } from "@/lib/yahoo";
+import { getQuote, getHistorical, getNews, HistoricalBar } from "@/lib/yahoo";
 import { buildSignal } from "@/lib/signals";
+import { SECTOR_ETF } from "@/lib/watchlist";
 
 export const revalidate = 300;
 
 async function getInitialData() {
   const watchlist = await getWatchlist();
 
-  // Fetch SPY bars once upfront for RS calculations (Sprint 2)
-  const spyBars = await getHistorical("SPY", 60);
+  // Fetch SPY bars once upfront for RS calculations
+  const spyBars = await getHistorical("SPY", 90);
+
+  // Fetch each unique sector ETF once and share across all tickers in that sector
+  const neededSectorEtfs = [...new Set(
+    watchlist.map((w) => SECTOR_ETF[w.ticker]).filter(Boolean)
+  )];
+  const sectorBarMap: Record<string, HistoricalBar[]> = {};
+  await Promise.all(
+    neededSectorEtfs.map(async (etf) => {
+      sectorBarMap[etf] = await getHistorical(etf, 90);
+    })
+  );
 
   const results = await Promise.all(
     watchlist.map(async ({ ticker, strategy }) => {
       const [quote, bars, news] = await Promise.all([
         getQuote(ticker),
-        getHistorical(ticker, 60),
+        getHistorical(ticker, 90),
         getNews(ticker),
       ]);
       if (!quote || bars.length === 0) return null;
-      const signal = buildSignal(ticker, strategy, bars, quote.high52w, spyBars);
+      const sectorEtf = SECTOR_ETF[ticker];
+      const sectorBars = sectorEtf ? (sectorBarMap[sectorEtf] ?? []) : [];
+      const signal = buildSignal(ticker, strategy, bars, quote.high52w, spyBars, sectorBars);
 
       const POSITIVE = ["buy", "bullish", "outperform", "upgrade", "strong", "surge", "rally", "beat", "upside", "growth"];
       const NEGATIVE = ["sell", "bearish", "underperform", "downgrade", "weak", "crash", "avoid", "miss", "cut", "risk"];
@@ -52,7 +66,7 @@ async function getInitialData() {
     })
   );
 
-  const signals = results.filter(Boolean).sort((a, b) => b!.score - a!.score);
+  const signals = results.filter(Boolean).sort((a, b) => b!.convictionScore - a!.convictionScore);
   const spySignal = signals.find((s) => s?.ticker === "SPY");
   const marketCondition: "bull" | "bear" | "neutral" = spySignal
     ? spySignal.indicators.isAboveMa20 ? "bull" : "bear"

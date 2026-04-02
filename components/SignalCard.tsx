@@ -5,20 +5,6 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import SAModal from "./SAModal";
 import StockChart from "./StockChart";
 
-/** Extracts the first dollar amount from a note string */
-function parseFirstPrice(note: string): number | null {
-  const matches = note.match(/\$(\d+(?:\.\d+)?)/g);
-  if (!matches || matches.length === 0) return null;
-  return parseFloat(matches[0].replace("$", ""));
-}
-
-/** Extracts the last dollar amount from a note string */
-function parseLastPrice(note: string): number | null {
-  const matches = note.match(/\$(\d+(?:\.\d+)?)/g);
-  if (!matches || matches.length === 0) return null;
-  return parseFloat(matches[matches.length - 1].replace("$", ""));
-}
-
 interface SAInfo {
   earningsDays: number | null;
   recentHeadline: string | null;
@@ -27,24 +13,35 @@ interface SAInfo {
   newsPublisher: string | null;
 }
 
+interface ValidationResult {
+  passed: boolean;
+  conflictPenalty: number;
+  dataQualityPts: number;
+  notes: string[];
+  checked_at: string;
+}
+
 interface SignalCardProps {
   ticker: string;
-  score: number;
   strength: string;
   price: number;
   changePct: number;
+  convictionScore: number;
+  convictionBand: "high" | "medium" | "low";
+  sectorRs: number | null;
+  validation: ValidationResult;
   volumeRatio: number;
   rsi14: number;
   isAboveMa20: boolean;
   isAboveMa50: boolean;
   atr14: number;
-  macd: number;
   macdSignal: number;
   macdHist: number;
   bbPct: number;
-  bbWidth: number;
   entryNote: string;
   stopNote: string;
+  entryPrice: number;
+  stopPrice: number;
   strategy: string;
   conditions?: { label: string; met: boolean }[];
   sa?: SAInfo;
@@ -93,24 +90,25 @@ function signalBadge(strength: string) {
 }
 
 export default function SignalCard({
-  ticker, score, strength, price, changePct,
+  ticker, strength, price, changePct,
+  convictionScore, convictionBand, sectorRs, validation,
   volumeRatio, rsi14, isAboveMa20, isAboveMa50,
-  atr14, macd, macdHist, bbPct, bbWidth,
-  entryNote, stopNote, strategy, conditions, sa, onOpenCalc,
+  atr14, macdHist, bbPct,
+  entryNote, stopNote, entryPrice, stopPrice,
+  strategy, conditions, sa, onOpenCalc,
 }: SignalCardProps) {
   const [modalOpen, setModalOpen] = useState(false);
   const [showChart, setShowChart] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [showValidation, setShowValidation] = useState(false); // collapsed by default
   const [activeTip, setActiveTip] = useState<string | null>(null);
 
-  const isAI = score >= 8;
+  const isAI = convictionScore >= 90 && validation.passed;
   const changePositive = changePct >= 0;
   const changeColor = changePositive ? "text-[#43ed9e]" : "text-[#ffb3ae]";
   const changeSign = changePositive ? "+" : "";
 
-  const entryPrice = parseLastPrice(entryNote);
-  const stopPrice = parseFirstPrice(stopNote);
-  const risk = entryPrice && stopPrice ? Math.abs(entryPrice - stopPrice) : null;
+  const risk = entryPrice > 0 && stopPrice > 0 ? Math.abs(entryPrice - stopPrice) : null;
   const targetPrice = entryPrice && risk ? entryPrice + 3 * risk : null;
   const earningsWarning = sa?.earningsDays !== null && sa?.earningsDays !== undefined && sa.earningsDays <= 7;
 
@@ -186,20 +184,21 @@ export default function SignalCard({
             </div>
           )}
 
-          {/* Confidence bar */}
+          {/* Conviction bar */}
           <div className="w-16 shrink-0 hidden sm:block">
             <div className="w-full bg-[#252b31] h-1 rounded-full overflow-hidden">
               <div
-                className={`h-full rounded-full transition-all ${
-                  score >= 8 ? "bg-[#43ed9e]"
-                  : score >= 6 ? "bg-[#00d084]"
-                  : score >= 4 ? "bg-yellow-400"
-                  : "bg-[#bacbbd]"
-                }`}
-                style={{ width: `${score * 10}%` }}
+                className="h-full rounded-full transition-all"
+                style={{
+                  width: `${convictionScore}%`,
+                  backgroundColor:
+                    convictionBand === "high" ? "#43ed9e"
+                    : convictionBand === "medium" ? "#00d084"
+                    : "#c8a84b",
+                }}
               />
             </div>
-            <p className="text-[10px] text-[#bacbbd] mt-1 text-right">{score}/10</p>
+            <p className="text-[10px] text-[#bacbbd] mt-1 text-right">{convictionScore}</p>
           </div>
 
           {/* Price + change */}
@@ -258,7 +257,7 @@ export default function SignalCard({
               ))}
             </div>
 
-            {/* MACD · BB · ATR row */}
+            {/* MACD · BB · ATR · Sector RS row */}
             <div className="grid grid-cols-3 gap-2 mb-3">
               <MetricTile label="MACD" tip="📉 Trend engine. Green bar = bullish momentum building. Red bar = losing steam. Crossover from red→green is a classic buy signal." activeTip={activeTip} setActiveTip={setActiveTip}>
                 <p className={`font-bold text-sm ${macdHist >= 0 ? "text-[#43ed9e]" : "text-[#ffb3ae]"}`}>
@@ -276,6 +275,80 @@ export default function SignalCard({
                 <p className="font-bold text-sm text-[#dde3ec]">${atr14.toFixed(2)}</p>
               </MetricTile>
             </div>
+
+            {/* Sector RS row */}
+            {sectorRs !== null && (
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                <MetricTile
+                  label="Sector RS"
+                  tip="🏆 How this stock is performing vs. its own industry ETF over the last 20 trading days. Positive = leading its sector. Negative = lagging. Leaders tend to keep leading."
+                  activeTip={activeTip}
+                  setActiveTip={setActiveTip}
+                >
+                  <p className={`font-bold text-sm ${sectorRs > 0 ? "text-[#43ed9e]" : sectorRs > -2 ? "text-yellow-400" : "text-[#ffb3ae]"}`}>
+                    {sectorRs > 0 ? "+" : ""}{sectorRs.toFixed(1)}%
+                  </p>
+                </MetricTile>
+                <MetricTile
+                  label="Conviction"
+                  tip="🎯 Composite score (0–100) combining technical strength, risk/reward tightness, sector leadership, and data quality. ≥90 = High Conviction setup."
+                  activeTip={activeTip}
+                  setActiveTip={setActiveTip}
+                >
+                  <p className={`font-bold text-sm ${
+                    convictionBand === "high" ? "text-[#43ed9e]"
+                    : convictionBand === "medium" ? "text-[#00d084]"
+                    : "text-[#c8a84b]"
+                  }`}>
+                    {convictionScore}/100
+                  </p>
+                </MetricTile>
+                <MetricTile
+                  label="Validation"
+                  tip="✅ Server-side checks: no conflicting indicators, stop within 8% of entry, 3:1 target achievable, data is fresh. All pass = validated setup."
+                  activeTip={activeTip}
+                  setActiveTip={setActiveTip}
+                >
+                  <p className={`font-bold text-sm ${validation.passed ? "text-[#43ed9e]" : "text-yellow-400"}`}>
+                    {validation.passed ? "✓ Pass" : "⚠ Check"}
+                  </p>
+                </MetricTile>
+              </div>
+            )}
+
+            {/* Validation checklist — collapsible */}
+            {validation.notes.length > 0 && (
+              <div className="mb-3 rounded-lg bg-[#0e141a] overflow-hidden">
+                <button
+                  onClick={(e) => { e.stopPropagation(); setShowValidation((v) => !v); }}
+                  className="w-full flex items-center justify-between px-2.5 py-2 hover:bg-[#161c22] transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-[#bacbbd]/60 uppercase tracking-widest">Validation checks</span>
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded font-semibold ${
+                      validation.passed
+                        ? "bg-[#43ed9e]/10 text-[#43ed9e]"
+                        : "bg-yellow-400/10 text-yellow-400"
+                    }`}>
+                      {validation.passed ? "All passed" : `${validation.notes.filter(n => n.startsWith("✗")).length} flagged`}
+                    </span>
+                  </div>
+                  {showValidation
+                    ? <ChevronUp size={11} className="text-[#bacbbd]/40" />
+                    : <ChevronDown size={11} className="text-[#bacbbd]/40" />
+                  }
+                </button>
+                {showValidation && (
+                  <div className="px-2.5 pb-2.5 space-y-1">
+                    {validation.notes.map((note, i) => (
+                      <p key={i} className={`text-[10px] leading-relaxed ${note.startsWith("✓") ? "text-[#43ed9e]/80" : "text-yellow-400/80"}`}>
+                        {note}
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Why this signal — condition pills */}
             {conditions && conditions.length > 0 && (
@@ -296,13 +369,13 @@ export default function SignalCard({
             )}
 
             {/* Trade notes */}
-            {score >= 5 && (
+            {convictionScore >= 40 && (
               <div className="space-y-1.5 mb-3 rounded-lg p-3 bg-[#0e141a]">
                 <p className="text-xs font-medium text-[#43ed9e]">▲ {entryNote}</p>
                 <p className="text-xs font-medium text-[#ffb3ae]">▼ {stopNote}</p>
                 {risk && targetPrice && (
                   <p className="text-[10px] text-[#bacbbd] pt-1 border-t border-[#3c4a40]/20">
-                    R:R {((targetPrice - (entryPrice ?? 0)) / risk).toFixed(1)}:1 · Target ${targetPrice.toFixed(2)}
+                    R:R {((targetPrice - entryPrice) / risk).toFixed(1)}:1 · Target ${targetPrice.toFixed(2)}
                   </p>
                 )}
               </div>

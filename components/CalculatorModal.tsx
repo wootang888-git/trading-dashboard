@@ -18,8 +18,9 @@ export default function CalculatorModal({ entry: initialEntry, stop: initialStop
 
   // Update fields when pre-fill values change (e.g. clicking Size on a different card)
   useEffect(() => {
-    if (initialEntry) setEntry(String(initialEntry));
-    if (initialStop) setStop(String(initialStop));
+    // Note: setState in effect is used here to update state when props change, accepted for this use case
+    if (initialEntry) setEntry(String(initialEntry)); // eslint-disable-line react-hooks/set-state-in-effect
+    if (initialStop) setStop(String(initialStop)); // eslint-disable-line react-hooks/set-state-in-effect
     setMinimized(false);
   }, [initialEntry, initialStop]);
 

@@ -22,7 +22,16 @@ export async function GET(req: NextRequest) {
     if (!res.ok) return NextResponse.json({ articles: [] });
     const data = await res.json();
 
-    const articles = (data?.data ?? []).slice(0, 5).map((item: any) => ({
+    interface SAItem {
+      id: string;
+      attributes?: {
+        title?: string;
+        publishOn?: string | null;
+        isPaywalled?: boolean;
+      };
+    }
+
+    const articles = (data?.data ?? []).slice(0, 5).map((item: SAItem) => ({
       id: item.id,
       title: item.attributes?.title ?? "",
       publishOn: item.attributes?.publishOn ?? null,

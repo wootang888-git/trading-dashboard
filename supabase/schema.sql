@@ -56,3 +56,45 @@ insert into watchlist (ticker, name, strategy) values
   ('SPY',   'S&P 500 ETF',       'etf_rotation'),
   ('QQQ',   'Nasdaq 100 ETF',    'etf_rotation')
 on conflict (ticker) do nothing;
+
+-- Backtest-calibrated indicator weights per strategy
+create table if not exists signal_weights (
+  id uuid primary key default gen_random_uuid(),
+  strategy text not null,
+  condition_name text not null,
+  win_rate numeric not null default 1.0,
+  sample_count int not null default 0,
+  computed_at timestamptz default now(),
+  unique(strategy, condition_name)
+);
+
+alter table signal_weights enable row level security;
+create policy "Allow all" on signal_weights for all using (true) with check (true);
+
+-- Signal history log for closed-loop validation
+create table if not exists signal_history (
+  id uuid primary key default gen_random_uuid(),
+  ticker text not null,
+  strategy text not null,
+  score int,
+  conviction_score int,
+  entry_price numeric,
+  stop_price numeric,
+  recorded_at timestamptz default now()
+);
+
+alter table signal_history enable row level security;
+create policy "Allow all" on signal_history for all using (true) with check (true);
+
+-- Backtest results for strategy tuning
+create table if not exists backtest_results (
+  id uuid primary key default gen_random_uuid(),
+  config jsonb not null,
+  summary jsonb not null,
+  trades jsonb not null,
+  signals jsonb not null,
+  run_at timestamptz default now()
+);
+
+alter table backtest_results enable row level security;
+create policy "Allow all" on backtest_results for all using (true) with check (true);

@@ -44,6 +44,14 @@ export interface Condition {
   met: boolean;
 }
 
+export interface ValidationResult {
+  passed: boolean;
+  conflictPenalty: number;  // 0 or negative (max -15); deducted for conflicting indicators
+  dataQualityPts: number;   // 0-15; fresh data, sufficient bars, no volume anomaly
+  notes: string[];          // human-readable check results
+  checked_at: string;       // ISO timestamp
+}
+
 export interface Signal {
   ticker: string;
   score: number;
@@ -52,7 +60,13 @@ export interface Signal {
   indicators: Indicators;
   entryNote: string;
   stopNote: string;
+  entryPrice: number;
+  stopPrice: number;
   conditions: Condition[];
+  convictionScore: number;       // 0-100 composite conviction score
+  convictionBand: "high" | "medium" | "low";  // high ≥90, medium 70–89, low <70
+  sectorRs: number | null;       // stock 20-bar return vs sector ETF (positive = outperforming)
+  validation: ValidationResult;
 }
 
 // ─── Indicator helpers ───────────────────────────────────────────────────────
@@ -294,7 +308,7 @@ export function computeIndicators(
 export function scoreMomentumBreakout(
   ind: Indicators,
   bars: HistoricalBar[]
-): { score: number; entryNote: string; stopNote: string; conditions: Condition[] } {
+): { score: number; entryNote: string; stopNote: string; entryPrice: number; stopPrice: number; conditions: Condition[] } {
   let score = 0;
 
   const rsiHealthy = ind.rsi14 >= 50 && ind.rsi14 <= 75;
@@ -344,6 +358,8 @@ export function scoreMomentumBreakout(
 
   return {
     score: Math.min(score, 10),
+    entryPrice,
+    stopPrice,
     entryNote: `Buy stop $0.05 above $${latest.high.toFixed(2)} (today's high / resistance)`,
     stopNote: stopLabel,
     conditions: [
@@ -372,7 +388,7 @@ export function scoreMomentumBreakout(
 export function scoreEMAPullback(
   ind: Indicators,
   bars: HistoricalBar[]
-): { score: number; entryNote: string; stopNote: string; conditions: Condition[] } {
+): { score: number; entryNote: string; stopNote: string; entryPrice: number; stopPrice: number; conditions: Condition[] } {
   let score = 0;
 
   const latest = bars[bars.length - 1];
@@ -433,6 +449,8 @@ export function scoreEMAPullback(
 
   return {
     score: Math.min(score, 10),
+    entryPrice,
+    stopPrice,
     entryNote: `Buy above $${entryPrice.toFixed(2)} (8 EMA pullback bounce)`,
     stopNote: stopLabel,
     conditions: [
@@ -459,7 +477,7 @@ export function scoreEMAPullback(
 export function scoreMeanReversion(
   ind: Indicators,
   bars: HistoricalBar[]
-): { score: number; entryNote: string; stopNote: string; conditions: Condition[] } {
+): { score: number; entryNote: string; stopNote: string; entryPrice: number; stopPrice: number; conditions: Condition[] } {
   let score = 0;
 
   const latest = bars[bars.length - 1];
@@ -509,6 +527,8 @@ export function scoreMeanReversion(
 
   return {
     score: Math.min(score, 10),
+    entryPrice,
+    stopPrice,
     entryNote: `Buy above $${entryPrice.toFixed(2)} (above reversal candle high)`,
     stopNote: stopLabel,
     conditions: [
@@ -532,7 +552,7 @@ export function scoreMeanReversion(
 export function scoreETFRotation(
   ind: Indicators,
   bars: HistoricalBar[]
-): { score: number; entryNote: string; stopNote: string; conditions: Condition[] } {
+): { score: number; entryNote: string; stopNote: string; entryPrice: number; stopPrice: number; conditions: Condition[] } {
   let score = 0;
 
   const latest = bars[bars.length - 1];
@@ -575,6 +595,8 @@ export function scoreETFRotation(
 
   return {
     score: Math.min(score, 10),
+    entryPrice,
+    stopPrice,
     entryNote: `Buy above $${entryPrice.toFixed(2)} (confirmation above current close)`,
     stopNote: stopLabel,
     conditions: [
@@ -594,6 +616,162 @@ export function scoreETFRotation(
   };
 }
 
+// ─── Sector RS ───────────────────────────────────────────────────────────────
+
+/** Computes the stock's 20-bar return minus the sector ETF's 20-bar return.
+ *  Positive = stock is outperforming its sector over the last month. */
+export function getSectorRS(bars: HistoricalBar[], sectorBars: HistoricalBar[]): number | null {
+  if (bars.length < 21 || sectorBars.length < 21) return null;
+  const len = Math.min(bars.length, sectorBars.length, 21);
+  const stockSlice = bars.slice(-len);
+  const sectorSlice = sectorBars.slice(-len);
+  if (sectorSlice[0].close === 0) return null;
+  const stockReturn = (stockSlice[stockSlice.length - 1].close - stockSlice[0].close) / stockSlice[0].close * 100;
+  const sectorReturn = (sectorSlice[sectorSlice.length - 1].close - sectorSlice[0].close) / sectorSlice[0].close * 100;
+  return stockReturn - sectorReturn;
+}
+
+// ─── Validation Pass ─────────────────────────────────────────────────────────
+
+/** Server-side validation pass — no new data fetches, uses pre-computed indicators.
+ *  Checks for conflicting signals, stop validity, R:R feasibility, and data freshness. */
+export function validateSignal(
+  ind: Indicators,
+  bars: HistoricalBar[],
+  entryPrice: number,
+  stopPrice: number,
+  high52w: number,
+  strategy: string
+): ValidationResult {
+  const notes: string[] = [];
+  let conflictPenalty = 0;
+  let dataQualityPts = 15;
+
+  // ── Conflict detection ──────────────────────────────────────────────────────
+  // For bullish strategies: RSI overbought (>75) while MACD histogram is falling = conflict
+  const isBullish = strategy !== "mean_reversion";
+  if (isBullish && ind.rsi14 > 75 && ind.macdHist < 0) {
+    conflictPenalty = -10;
+    notes.push("✗ RSI overbought while MACD histogram negative — trend may be exhausting");
+  } else {
+    notes.push("✓ No major indicator conflicts");
+  }
+
+  // EMA fan claimed but EMAs aren't aligned
+  if (ind.emaFanOpen && !(ind.ema10 > ind.ema20 && ind.ema20 > ind.ema50)) {
+    conflictPenalty = Math.min(conflictPenalty - 5, -15);
+    notes.push("✗ EMA fan mismatch — fan conditions not fully confirmed");
+  }
+
+  // Mean reversion: penalize if price is still above MA50 (no real oversold thesis)
+  if (strategy === "mean_reversion" && ind.isAboveMa50 && ind.rsi14 > 55) {
+    conflictPenalty = Math.min(conflictPenalty - 5, -15);
+    notes.push("✗ Mean reversion: price above MA50 with RSI >55 — no true oversold setup");
+  }
+
+  // ── Stop validity ───────────────────────────────────────────────────────────
+  const riskPct = entryPrice > 0 ? (entryPrice - stopPrice) / entryPrice : 0;
+  if (riskPct > 0.08) {
+    dataQualityPts -= 5;
+    notes.push(`✗ Stop ${(riskPct * 100).toFixed(1)}% below entry — wider than 8% (position size will be small)`);
+  } else if (riskPct <= 0) {
+    dataQualityPts -= 10;
+    notes.push("✗ Stop price is at or above entry price — invalid setup");
+  } else {
+    notes.push(`✓ Stop is ${(riskPct * 100).toFixed(1)}% below entry — valid risk`);
+  }
+
+  // ── R:R feasibility: 3:1 target should be below the 52w high ───────────────
+  const target = entryPrice + 3 * (entryPrice - stopPrice);
+  if (high52w > 0 && target > high52w * 1.05) {
+    dataQualityPts -= 3;
+    notes.push(`✗ 3:1 target $${target.toFixed(2)} exceeds 52w high $${high52w.toFixed(2)} — hard resistance overhead`);
+  } else {
+    notes.push(`✓ 3:1 target $${target.toFixed(2)} is achievable within price history`);
+  }
+
+  // ── Data freshness ──────────────────────────────────────────────────────────
+  if (bars.length < 50) {
+    dataQualityPts -= 4;
+    notes.push(`✗ Only ${bars.length} bars available — indicators less reliable with <50 bars`);
+  } else {
+    notes.push(`✓ ${bars.length} bars — sufficient data for all indicators`);
+  }
+
+  // Check most recent bar is not stale (> 4 calendar days old = weekend/holiday gap)
+  const latestBar = bars[bars.length - 1];
+  const barDate = new Date(latestBar.date);
+  const now = new Date();
+  const daysSinceBar = (now.getTime() - barDate.getTime()) / (1000 * 60 * 60 * 24);
+  if (daysSinceBar > 4) {
+    dataQualityPts -= 3;
+    notes.push(`✗ Most recent bar is ${Math.round(daysSinceBar)} days old — data may be stale`);
+  }
+
+  // ── Volume anomaly ──────────────────────────────────────────────────────────
+  if (ind.volumeRatio > 10) {
+    dataQualityPts -= 3;
+    notes.push("✗ Volume anomaly: today's volume >10× average — possible data error or halt");
+  }
+
+  dataQualityPts = Math.max(0, dataQualityPts);
+  conflictPenalty = Math.max(-15, conflictPenalty);
+
+  return {
+    passed: conflictPenalty === 0 && dataQualityPts >= 10,
+    conflictPenalty,
+    dataQualityPts,
+    notes,
+    checked_at: new Date().toISOString(),
+  };
+}
+
+// ─── Conviction Scoring ───────────────────────────────────────────────────────
+
+/** Computes a 0–100 composite conviction score from four components:
+ *  1. Technical (40 pts): calibrated score
+ *  2. R:R tightness (30 pts): tighter stop = more achievable 3:1 R:R
+ *  3. Sector RS (15 pts): stock outperforming its sector ETF
+ *  4. Data quality (15 pts): from validation pass, minus conflict penalty */
+function computeConviction(
+  score: number,
+  entryPrice: number,
+  stopPrice: number,
+  sectorRs: number | null,
+  validation: ValidationResult
+): number {
+  // Component 1: Technical score (40 pts)
+  const technicalPts = Math.round((score / 10) * 40);
+
+  // Component 2: R:R tightness (30 pts)
+  const riskPct = entryPrice > 0 && stopPrice > 0 && entryPrice > stopPrice
+    ? (entryPrice - stopPrice) / entryPrice
+    : 0.20;
+  let rrPts = 0;
+  if (riskPct > 0 && riskPct <= 0.03) rrPts = 30;       // ≤3% risk: ideal tight stop
+  else if (riskPct <= 0.05) rrPts = 26;                  // ≤5%: very good
+  else if (riskPct <= 0.08) rrPts = 20;                  // ≤8%: good
+  else if (riskPct <= 0.12) rrPts = 12;                  // ≤12%: acceptable
+  else if (riskPct <= 0.20) rrPts = 5;                   // ≤20%: wide
+  // >20%: 0 pts
+
+  // Component 3: Sector RS (15 pts)
+  let sectorPts = 7; // neutral if no sector data
+  if (sectorRs !== null) {
+    if (sectorRs > 3) sectorPts = 15;       // strongly outperforming sector
+    else if (sectorRs > 1) sectorPts = 12;  // outperforming sector
+    else if (sectorRs > 0) sectorPts = 9;   // slight outperformance
+    else if (sectorRs > -2) sectorPts = 5;  // roughly in-line
+    else sectorPts = 0;                      // underperforming sector
+  }
+
+  // Component 4: Data quality + conflict penalty
+  const qualityPts = validation.dataQualityPts + validation.conflictPenalty;
+
+  const total = technicalPts + rrPts + sectorPts + qualityPts;
+  return Math.max(0, Math.min(100, total));
+}
+
 // ─── buildSignal ─────────────────────────────────────────────────────────────
 
 export function buildSignal(
@@ -601,11 +779,12 @@ export function buildSignal(
   strategy: string,
   bars: HistoricalBar[],
   high52w: number,
-  spyBars: HistoricalBar[] = []
+  spyBars: HistoricalBar[] = [],
+  sectorBars: HistoricalBar[] = []
 ): Signal {
   const ind = computeIndicators(bars, high52w, spyBars);
 
-  const { score, entryNote, stopNote, conditions } =
+  const { score, entryNote, stopNote, entryPrice, stopPrice, conditions } =
     strategy === "ema_pullback"     ? scoreEMAPullback(ind, bars)
     : strategy === "mean_reversion" ? scoreMeanReversion(ind, bars)
     : strategy === "etf_rotation"   ? scoreETFRotation(ind, bars)
@@ -617,5 +796,20 @@ export function buildSignal(
     : score >= 4 ? "weak"
     : "none";
 
-  return { ticker, score, strength, strategy, indicators: ind, entryNote, stopNote, conditions };
+  const sectorRs = sectorBars.length >= 21
+    ? getSectorRS(bars, sectorBars)
+    : null;
+
+  const validation = validateSignal(ind, bars, entryPrice, stopPrice, high52w, strategy);
+  const convictionScore = computeConviction(score, entryPrice, stopPrice, sectorRs, validation);
+  const convictionBand: Signal["convictionBand"] =
+    convictionScore >= 90 ? "high"
+    : convictionScore >= 70 ? "medium"
+    : "low";
+
+  return {
+    ticker, score, strength, strategy, indicators: ind,
+    entryNote, stopNote, entryPrice, stopPrice, conditions,
+    convictionScore, convictionBand, sectorRs, validation,
+  };
 }

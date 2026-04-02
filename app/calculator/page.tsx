@@ -1,22 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { ArrowLeft, AlertCircle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 
 export default function CalculatorPage() {
   const [account, setAccount] = useState("10000");
   const [riskPct, setRiskPct] = useState("2");
-  const [entry, setEntry] = useState("");
-  const [stop, setStop] = useState("");
-
-  // Pre-fill from URL params (e.g. /calculator?entry=212.34&stop=205.67)
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("entry")) setEntry(params.get("entry")!);
-    if (params.get("stop")) setStop(params.get("stop")!);
-  }, []);
+  const initialQuery = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+  const [entry, setEntry] = useState(initialQuery?.get("entry") || "");
+  const [stop, setStop] = useState(initialQuery?.get("stop") || "");
 
   const accountNum = parseFloat(account) || 0;
   const riskPctNum = parseFloat(riskPct) || 0;

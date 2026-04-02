@@ -53,11 +53,12 @@ export default function SAModal({ open, onClose, ticker, sa }: SAModalProps) {
 
   useEffect(() => {
     if (!open) return;
-    setLoading(true);
+    // Note: setState in effect is used to set loading state, accepted for this async operation
+    setLoading(true); // eslint-disable-line react-hooks/set-state-in-effect
     fetch(`/api/sa-articles?ticker=${ticker}`)
       .then((r) => r.json())
-      .then((d) => setArticles(d.articles ?? []))
-      .finally(() => setLoading(false));
+      .then((d) => setArticles(d.articles ?? [])) // eslint-disable-line react-hooks/set-state-in-effect
+      .finally(() => setLoading(false)); // eslint-disable-line react-hooks/set-state-in-effect
   }, [open, ticker]);
 
   const sentiment = sa.newsSentiment ?? "neutral";
