@@ -20,6 +20,7 @@ type SavedBacktestConfig = {
   requireBreakout: boolean;
   maxEntryGapPct: number;
   minHoldDays: number;
+  reportTopCount: number;
   sweepMode: boolean;
   scheduleSweep: boolean;
 };
@@ -46,9 +47,9 @@ type BacktestSummary = {
 type BacktestResult = {
   message: string;
   config: Record<string, unknown>;
-  summary: BacktestSummary;
-  signals: WatchlistSignalSnapshot[];
-  trades: TradeResult[];
+  summary?: BacktestSummary;
+  signals?: WatchlistSignalSnapshot[];
+  trades?: TradeResult[];
   sweepResults?: Array<{ config: Record<string, unknown>; result: { summary: BacktestSummary; trades: TradeResult[]; signals: WatchlistSignalSnapshot[] } }>;
 };
 
@@ -78,6 +79,19 @@ function getRecommendation(summary: BacktestSummary) {
   return "Win rate is low. Consider fewer trades and stricter signal criteria before live deployment.";
 }
 
+function formatSweepConfig(config: Record<string, unknown>) {
+  const pieces = [] as string[];
+  if (config.minScore !== undefined) pieces.push(`minScore: ${config.minScore}`);
+  if (config.topN !== undefined) pieces.push(`topN: ${config.topN}`);
+  if (config.trendFilter !== undefined) pieces.push(`trend: ${config.trendFilter}`);
+  if (config.requireBreakout !== undefined) pieces.push(`breakout: ${config.requireBreakout}`);
+  if (config.maxEntryGapPct !== undefined) pieces.push(`maxGap: ${config.maxEntryGapPct}%`);
+  if (config.minHoldDays !== undefined) pieces.push(`minHold: ${config.minHoldDays}d`);
+  if (config.atrPeriod !== undefined) pieces.push(`ATR: ${config.atrPeriod}`);
+  if (config.targetMultiplier !== undefined) pieces.push(`R: ${config.targetMultiplier}`);
+  return pieces.join(" • ");
+}
+
 export default function BacktestPage() {
   const [startDate, setStartDate] = useState("2026-01-03");
   const [endDate, setEndDate] = useState("2026-02-15");
@@ -89,9 +103,10 @@ export default function BacktestPage() {
   const [minScore, setMinScore] = useState(4);
   const [topN, setTopN] = useState(3);
   const [trendFilter, setTrendFilter] = useState(true);
-  const [requireBreakout, setRequireBreakout] = useState(false);
+  const [requireBreakout, setRequireBreakout] = useState(true);
   const [maxEntryGapPct, setMaxEntryGapPct] = useState(5);
   const [minHoldDays, setMinHoldDays] = useState(0);
+  const [reportTopCount, setReportTopCount] = useState(5);
   const [sweepMode, setSweepMode] = useState(false);
   const [scheduleSweep, setScheduleSweep] = useState(false);
   const [working, setWorking] = useState(false);
@@ -137,6 +152,7 @@ export default function BacktestPage() {
     params.set("requireBreakout", String(requireBreakout));
     params.set("maxEntryGapPct", String(maxEntryGapPct));
     params.set("minHoldDays", String(minHoldDays));
+    params.set("reportTopCount", String(reportTopCount));
     if (sweepMode) {
       params.set("sweep", "true");
     }
@@ -144,7 +160,7 @@ export default function BacktestPage() {
       params.set("schedule", "true");
     }
     return params;
-  }, [startDate, endDate, fixedShares, atrPeriod, tpMultiplier, maxHoldDays, includeMode, minScore, topN, trendFilter, requireBreakout, maxEntryGapPct, minHoldDays, sweepMode, scheduleSweep]);
+  }, [startDate, endDate, fixedShares, atrPeriod, tpMultiplier, maxHoldDays, includeMode, minScore, topN, trendFilter, requireBreakout, maxEntryGapPct, minHoldDays, reportTopCount, sweepMode, scheduleSweep]);
 
   const runBacktest = useCallback(async () => {
     setWorking(true);
@@ -195,10 +211,39 @@ export default function BacktestPage() {
         requireBreakout,
         maxEntryGapPct,
         minHoldDays,
+        reportTopCount,
         sweepMode,
         scheduleSweep,
       },
     ]);
+  };
+
+  const pinSweepConfig = (config: Record<string, unknown>) => {
+    const name = prompt("Enter a name for this pinned sweep strategy:", `sweep-${new Date().toISOString().slice(0,10)}`);
+    if (!name) return;
+    const cfg = config as Partial<SavedBacktestConfig>;
+
+    const pinned: SavedBacktestConfig = {
+      name,
+      startDate: String(cfg.startDate ?? startDate),
+      endDate: String(cfg.endDate ?? endDate),
+      fixedShares: Number(cfg.fixedShares ?? fixedShares),
+      atrPeriod: Number(cfg.atrPeriod ?? atrPeriod),
+      tpMultiplier: Number(cfg.tpMultiplier ?? tpMultiplier),
+      maxHoldDays: Number(cfg.maxHoldDays ?? maxHoldDays),
+      includeMode: (cfg.includeMode as IncludeMode) ?? includeMode,
+      minScore: Number(cfg.minScore ?? minScore),
+      topN: Number(cfg.topN ?? topN),
+      trendFilter: Boolean(cfg.trendFilter ?? trendFilter),
+      requireBreakout: Boolean(cfg.requireBreakout ?? requireBreakout),
+      maxEntryGapPct: Number(cfg.maxEntryGapPct ?? maxEntryGapPct),
+      minHoldDays: Number(cfg.minHoldDays ?? minHoldDays),
+      reportTopCount: Number(cfg.reportTopCount ?? reportTopCount),
+      sweepMode: Boolean(cfg.sweepMode ?? sweepMode),
+      scheduleSweep: Boolean(cfg.scheduleSweep ?? scheduleSweep),
+    };
+
+    setSavedConfigs((prev) => [...prev, pinned]);
   };
 
   const loadConfig = (cfg: SavedBacktestConfig) => {
@@ -215,9 +260,13 @@ export default function BacktestPage() {
     setRequireBreakout(Boolean(cfg.requireBreakout ?? requireBreakout));
     setMaxEntryGapPct(Number(cfg.maxEntryGapPct ?? maxEntryGapPct));
     setMinHoldDays(Number(cfg.minHoldDays ?? minHoldDays));
+    setReportTopCount(Number(cfg.reportTopCount ?? reportTopCount));
     setSweepMode(Boolean(cfg.sweepMode ?? sweepMode));
     setScheduleSweep(Boolean(cfg.scheduleSweep ?? scheduleSweep));
   };
+
+  const activeSummary = result?.summary ?? result?.sweepResults?.[0]?.result.summary;
+  const activeSignals = result?.signals ?? result?.sweepResults?.[0]?.result.signals ?? [];
 
   return (
     <main className="max-w-5xl mx-auto px-4 py-6">
@@ -277,14 +326,25 @@ export default function BacktestPage() {
           <label className="text-xs text-slate-200">Max hold days
             <input value={maxHoldDays} onChange={(e) => setMaxHoldDays(Number(e.target.value))} type="number" min={5} max={90} className="w-full rounded bg-[#1c2c28] border border-[#3f5b51] mt-1 p-2 text-sm" />
           </label>
-          <label className="text-xs text-slate-200">Auto sweep run
-            <input type="checkbox" checked={sweepMode} onChange={(e) => setSweepMode(e.target.checked)} className="ml-2" />
-            <p className="text-[10px] text-slate-400 mt-1">Runs multiple configuration variations automatically and shows best strategies in one result.</p>
-          </label>
-          <label className="text-xs text-slate-200">Schedule auto sweep daily
-            <input type="checkbox" checked={scheduleSweep} onChange={(e) => setScheduleSweep(e.target.checked)} className="ml-2" />
-            <p className="text-[10px] text-slate-400 mt-1">When enabled, simulation will run every 24 hours while the app is open.</p>
-          </label>
+          <div className="col-span-1 md:col-span-2 border border-[#2f4340] p-3 rounded-lg bg-[#10231f]">
+            <h3 className="text-sm text-white font-semibold mb-2">Reporting settings</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <label className="text-xs text-slate-200">Top X Conviction & Best Performers
+                <input value={reportTopCount} onChange={(e) => setReportTopCount(Math.max(5, Math.min(Number(e.target.value), Math.min(100, Math.max(5, activeSignals.length || 5)))))} type="number" min={5} max={Math.min(100, Math.max(5, activeSignals.length || 5))} className="w-full rounded bg-[#1c2c28] border border-[#3f5b51] mt-1 p-2 text-sm" />
+                <p className="text-[10px] text-slate-400 mt-1">Number of top conviction tickers and best performers to show in results (5-100, based on watchlist size).</p>
+              </label>
+              <div className="text-xs text-slate-200">
+                <label className="inline-flex items-center">
+                  <input type="checkbox" checked={sweepMode} onChange={(e) => setSweepMode(e.target.checked)} className="mr-2" /> Auto sweep run
+                </label>
+                <p className="text-[10px] text-slate-400 mt-1">Runs multiple configuration variations automatically and shows best strategies in one result.</p>
+                <label className="inline-flex items-center mt-2">
+                  <input type="checkbox" checked={scheduleSweep} onChange={(e) => setScheduleSweep(e.target.checked)} className="mr-2" /> Schedule auto sweep daily
+                </label>
+                <p className="text-[10px] text-slate-400 mt-1">When enabled, simulation will run every 24 hours while the app is open.</p>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div className="mt-4 flex flex-wrap gap-2">
@@ -322,17 +382,21 @@ export default function BacktestPage() {
       {result && (
         <section className="bg-[#121f1d] border border-[#2f4340] rounded-lg p-4 mb-4">
           <h2 className="font-semibold text-white mb-2">Result Summary</h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs text-slate-300">
-            <div>Total signals: {result.summary.totalSignals}</div>
-            <div>Watch-82 alerts: {result.signals.filter((s) => s.isWatch82).length}</div>
-            <div>Total trades: {result.summary.totalTrades}</div>
-            <div>Win rate: {fmPercent(result.summary.winRate)}</div>
-            <div>Net PnL: {result.summary.netPnl.toFixed(2)}</div>
-            <div>Avg win %: {result.summary.avgWinPct.toFixed(2)}</div>
-            <div>Avg loss %: {result.summary.avgLossPct.toFixed(2)}</div>
-            <div>Avg hold: {result.summary.averageHoldDays.toFixed(1)}d</div>
-            <div>Total risked: {result.summary.totalRisked.toFixed(2)}</div>
-          </div>
+          {!activeSummary ? (
+            <div className="text-slate-300 text-sm">No summary available; sweep results are displayed below.</div>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs text-slate-300">
+              <div>Total signals: {activeSummary.totalSignals}</div>
+              <div>Watch-82 alerts: {activeSignals.filter((s) => s.isWatch82).length}</div>
+              <div>Total trades: {activeSummary.totalTrades}</div>
+              <div>Win rate: {fmPercent(activeSummary.winRate)}</div>
+              <div>Net PnL: {activeSummary.netPnl.toFixed(2)}</div>
+              <div>Avg win %: {activeSummary.avgWinPct.toFixed(2)}</div>
+              <div>Avg loss %: {activeSummary.avgLossPct.toFixed(2)}</div>
+              <div>Avg hold: {activeSummary.averageHoldDays.toFixed(1)}d</div>
+              <div>Total risked: {activeSummary.totalRisked.toFixed(2)}</div>
+            </div>
+          )}
 
           {result.sweepResults && result.sweepResults.length > 0 && (
             <div className="mt-4">
@@ -341,21 +405,23 @@ export default function BacktestPage() {
                 <table className="w-full text-xs text-left border-collapse">
                   <thead>
                     <tr>
-                      <th className="px-2 py-1 border border-[#2f4340]">Config</th>
+                      <th className="px-2 py-1 border border-[#2f4340]">Config Summary</th>
                       <th className="px-2 py-1 border border-[#2f4340]">Win rate</th>
                       <th className="px-2 py-1 border border-[#2f4340]">Net PnL</th>
                       <th className="px-2 py-1 border border-[#2f4340]">Trades</th>
                       <th className="px-2 py-1 border border-[#2f4340]">Recommendation</th>
+                      <th className="px-2 py-1 border border-[#2f4340]">Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {result.sweepResults.map((item, index) => (
                       <tr key={index} className="hover:bg-[#162d2a]">
-                        <td className="px-2 py-1 border border-[#2f4340] whitespace-nowrap">{JSON.stringify(item.config)}</td>
+                        <td className="px-2 py-1 border border-[#2f4340] whitespace-nowrap">{formatSweepConfig(item.config)}</td>
                         <td className="px-2 py-1 border border-[#2f4340]">{fmPercent(item.result.summary.winRate)}</td>
                         <td className="px-2 py-1 border border-[#2f4340]">{item.result.summary.netPnl.toFixed(2)}</td>
                         <td className="px-2 py-1 border border-[#2f4340]">{item.result.summary.totalTrades}</td>
                         <td className="px-2 py-1 border border-[#2f4340]">{getRecommendation(item.result.summary)}</td>
+                        <td className="px-2 py-1 border border-[#2f4340]"><button onClick={() => pinSweepConfig(item.config)} className="px-2 py-1 text-[10px] rounded border border-slate-500">Pin this config</button></td>
                       </tr>
                     ))}
                   </tbody>
@@ -365,7 +431,7 @@ export default function BacktestPage() {
           )}
 
           <div className="mt-4">
-            <h3 className="text-sm font-semibold mb-2">Top 5 Conviction Tickers</h3>
+            <h3 className="text-sm font-semibold mb-2">Top {reportTopCount} Conviction Tickers</h3>
             <div className="overflow-x-auto rounded border border-[#2f4340] mb-4">
               <table className="w-full text-xs text-left border-collapse">
                 <thead>
@@ -379,7 +445,7 @@ export default function BacktestPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {result.summary.topConvictionTickers.map((item) => (
+                  {(activeSummary?.topConvictionTickers ?? []).slice(0, reportTopCount).map((item) => (
                     <tr key={item.ticker} className="hover:bg-[#162d2a]">
                       <td className="px-2 py-1 border border-[#2f4340]">{item.ticker}</td>
                       <td className="px-2 py-1 border border-[#2f4340]">{item.convictionScore.toFixed(1)}</td>
@@ -406,7 +472,7 @@ export default function BacktestPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {result.summary.bestPerformers.map((item) => (
+                  {(activeSummary?.bestPerformers ?? []).slice(0, reportTopCount).map((item) => (
                     <tr key={item.ticker} className="hover:bg-[#162d2a]">
                       <td className="px-2 py-1 border border-[#2f4340]">{item.ticker}</td>
                       <td className="px-2 py-1 border border-[#2f4340]">{item.pnlPct.toFixed(2)}%</td>

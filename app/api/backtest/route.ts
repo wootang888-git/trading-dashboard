@@ -21,6 +21,7 @@ export async function GET(request: Request) {
   const requireBreakout = url.searchParams.get("requireBreakout") === "true";
   const maxEntryGapPct = Number(url.searchParams.get("maxEntryGapPct") ?? 100);
   const minHoldDays = Number(url.searchParams.get("minHoldDays") ?? 0);
+  const reportTopCount = Number(url.searchParams.get("reportTopCount") ?? 5);
 
   const watchlist = await getWatchlist();
   const spyBars = await getHistorical("SPY", HISTORY_DAYS);
@@ -39,6 +40,7 @@ export async function GET(request: Request) {
     requireBreakout,
     maxEntryGapPct: Number.isNaN(maxEntryGapPct) ? undefined : maxEntryGapPct,
     minHoldDays: Number.isNaN(minHoldDays) ? undefined : minHoldDays,
+    reportTopCount: Number.isNaN(reportTopCount) ? undefined : reportTopCount,
   };
 
   const sweep = url.searchParams.get("sweep") === "true";

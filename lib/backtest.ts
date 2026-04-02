@@ -371,6 +371,7 @@ export interface WatchlistBacktestConfig {
   requireBreakout?: boolean; // require next-day close > prev close high
   maxEntryGapPct?: number; // skip if next open gaps more than this % from signal close
   minHoldDays?: number;    // enforce minimum days to hold before exit logic applies
+  reportTopCount?: number; // number of top conviction and best performers to show (default 5, min 5)
 }
 
 export interface WatchlistTickerPerformance {
@@ -749,13 +750,16 @@ export async function runWatchlistBacktest(
     convictionScore: stats.maxConviction,
   }));
 
+  const reportTopCount = Math.max(5, config.reportTopCount ?? 5);
+  const maxTop = Math.min(reportTopCount, perTicker.length);
+
   const topConvictionTickers = [...perTicker]
     .sort((a, b) => b.convictionScore - a.convictionScore || b.pnl - a.pnl)
-    .slice(0, 5);
+    .slice(0, maxTop);
 
   const bestPerformers = [...perTicker]
     .sort((a, b) => b.pnlPct - a.pnlPct || b.pnl - a.pnl)
-    .slice(0, 5);
+    .slice(0, maxTop);
 
   const switchCountsPerTicker = transitionStats;
   const switchDistributionMap = new Map<number, number>();
