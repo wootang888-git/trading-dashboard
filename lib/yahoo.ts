@@ -55,7 +55,7 @@ function toETSeconds(date: Date): number {
 
 export async function getQuote(ticker: string): Promise<QuoteData | null> {
   try {
-    const quote = await yf.quote(ticker);
+    const quote = await yf.quote(ticker, {}, { validateResult: false });
     return {
       ticker,
       price: quote.regularMarketPrice ?? 0,
@@ -76,7 +76,7 @@ export async function getQuote(ticker: string): Promise<QuoteData | null> {
 /** Returns the most recent news story for a ticker using Yahoo Finance search (free, no rate limit) */
 export async function getNews(ticker: string): Promise<NewsItem | null> {
   try {
-    const result = await yf.search(ticker, { newsCount: 5, quotesCount: 0 });
+    const result = await yf.search(ticker, { newsCount: 5, quotesCount: 0 }, { validateResult: false });
     const story = ((result.news as any[]) ?? []).find((n: any) => n.type === "STORY");
     if (!story) return null;
     return {
@@ -107,7 +107,7 @@ export async function getIntraday(
     const result = await yf.chart(ticker, {
       period1: from,
       interval: yfInterval as "1m" | "2m" | "5m" | "15m" | "30m" | "60m",
-    });
+    }, { validateResult: false });
     return ((result.quotes as any[]) ?? [])
       .filter((q: any) => q.close !== null && q.date !== null)
       .map((q: any) => ({
@@ -165,7 +165,7 @@ export async function getIntradayMultiDay(
     const result = await yf.chart(ticker, {
       period1: from,
       interval: yfInterval as "30m" | "60m",
-    });
+    }, { validateResult: false });
     let bars: IntradayBar[] = ((result.quotes as any[]) ?? [])
       .filter((q: any) => q.close !== null && q.date !== null)
       .map((q: any) => ({
@@ -196,7 +196,7 @@ export async function getHistorical(
     const result = await yf.chart(ticker, {
       period1: startDate,
       interval: "1d",
-    });
+    }, { validateResult: false });
 
     return ((result.quotes as any[]) ?? [])
       .filter((q: any) => q.close !== null)
