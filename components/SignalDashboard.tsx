@@ -2,9 +2,10 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import MarketBanner from "./MarketBanner";
+import MarketSessionPill from "./MarketSessionPill";
 import SignalCard from "./SignalCard";
 import CalculatorModal from "./CalculatorModal";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, BookOpen } from "lucide-react";
 
 const REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes
 const TRADE_THRESHOLD = 82;  // Gate 1: pull the trigger
@@ -94,11 +95,17 @@ function notify(title: string, body: string) {
   new Notification(title, { body, icon: "/favicon.ico" });
 }
 
+interface OpenPositionSummary {
+  count: number;
+  nearStop: string[];   // tickers near their stop
+}
+
 export default function SignalDashboard({ initial }: { initial: DashboardData }) {
   const [data, setData] = useState<DashboardData>(initial);
   const [loading, setLoading] = useState(false);
   const [countdown, setCountdown] = useState(REFRESH_INTERVAL / 1000);
   const [calc, setCalc] = useState<CalcState>({ open: false, entry: null, stop: null });
+  const [openPositions, setOpenPositions] = useState<OpenPositionSummary | null>(null);
 
   // Track previous conviction scores to detect Watch→Trade crossings
   const prevScores = useRef<Map<string, number>>(
@@ -106,6 +113,40 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
   );
 
   useNotificationPermission();
+
+  // Fetch open positions summary for morning brief
+  useEffect(() => {
+    async function loadPositions() {
+      try {
+        const [tradesRes, pricesRes] = await Promise.all([
+          fetch("/api/trades"),
+          Promise.resolve(null), // prices fetched after we know tickers
+        ]);
+        void pricesRes;
+        if (!tradesRes.ok) return;
+        const { trades } = await tradesRes.json();
+        const openTrades = (trades as Array<{ ticker: string; entry_price: number; stop_price: number | null; exit_date: string | null }>)
+          .filter((t) => !t.exit_date);
+        if (openTrades.length === 0) { setOpenPositions({ count: 0, nearStop: [] }); return; }
+
+        const tickers = [...new Set(openTrades.map((t) => t.ticker))].join(",");
+        const priceRes = await fetch(`/api/current-prices?tickers=${tickers}`);
+        if (!priceRes.ok) { setOpenPositions({ count: openTrades.length, nearStop: [] }); return; }
+        const prices: Record<string, number | null> = await priceRes.json();
+
+        const nearStop = openTrades
+          .filter((t) => {
+            const live = prices[t.ticker];
+            if (!live || !t.stop_price) return false;
+            return ((live - t.stop_price) / t.entry_price) * 100 < 5;
+          })
+          .map((t) => t.ticker);
+
+        setOpenPositions({ count: openTrades.length, nearStop });
+      } catch { /* silent — morning brief is non-critical */ }
+    }
+    loadPositions();
+  }, []);
 
   const openCalc = useCallback((entry?: number | null, stop?: number | null) => {
     setCalc({ open: true, entry: entry ?? null, stop: stop ?? null });
@@ -173,7 +214,7 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
     <div className="space-y-6">
       <MarketBanner condition={data.marketCondition} />
 
-      {/* Stats pills */}
+      {/* Stats pills + session */}
       <div className="flex items-center gap-2 flex-wrap">
         {[
           { label: `${data.signals.length} Signals` },
@@ -201,7 +242,32 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
             {label}
           </span>
         ))}
+        <MarketSessionPill />
       </div>
+
+      {/* Morning Brief — open positions health */}
+      {openPositions !== null && openPositions.count > 0 && (
+        <div className="rounded-xl px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-1.5"
+          style={{ backgroundColor: "var(--surface-container)" }}>
+          <div className="flex items-center gap-1.5 text-xs font-semibold" style={{ color: "var(--on-surface-variant)" }}>
+            <BookOpen size={13} />
+            Today&apos;s Positions
+          </div>
+          <span className="text-xs" style={{ color: "var(--on-surface-variant)" }}>
+            <span className="font-semibold text-white">{openPositions.count}</span> open
+          </span>
+          {openPositions.nearStop.length > 0 ? (
+            <span className="flex items-center gap-1 text-xs font-semibold text-orange-400">
+              ⚠ Near stop: {openPositions.nearStop.join(", ")}
+            </span>
+          ) : (
+            <span className="text-xs text-[#43ed9e]">✓ All positions have stop buffer &gt;5%</span>
+          )}
+          <a href="/journal" className="ml-auto text-xs underline-offset-2 hover:underline" style={{ color: "var(--on-surface-variant)" }}>
+            View journal →
+          </a>
+        </div>
+      )}
 
       {/* Refresh bar */}
       <div className="flex items-center justify-between text-xs" style={{ color: "var(--on-surface-variant)" }}>

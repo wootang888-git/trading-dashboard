@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
-import { ArrowLeft, Plus, Trash2, AlertCircle, ChevronDown, ChevronUp, TrendingUp, TrendingDown } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, AlertCircle, ChevronDown, ChevronUp, TrendingUp, TrendingDown, RefreshCw } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -171,9 +171,29 @@ export default function JournalManager({ initial }: { initial: Trade[] }) {
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  // Summary
+  // Live prices for open positions
+  const [livePrices, setLivePrices] = useState<Record<string, number | null>>({});
+  const [liveLoading, setLiveLoading] = useState(false);
+
   const open = trades.filter((t) => !t.exit_date);
   const closed = trades.filter((t) => t.exit_date);
+
+  const fetchLivePrices = async (positions: typeof open) => {
+    const tickers = [...new Set(positions.map((t) => t.ticker))];
+    if (tickers.length === 0) return;
+    setLiveLoading(true);
+    try {
+      const res = await fetch(`/api/current-prices?tickers=${tickers.join(",")}`);
+      if (res.ok) setLivePrices(await res.json());
+    } finally {
+      setLiveLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (open.length > 0) fetchLivePrices(open);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trades]);
   const totalPnL = closed.reduce((sum, t) => {
     return sum + (t.exit_price! - t.entry_price) * t.shares;
   }, 0);
@@ -371,22 +391,71 @@ export default function JournalManager({ initial }: { initial: Trade[] }) {
         {/* Open Positions */}
         {open.length > 0 && (
           <div className="space-y-2">
-            <h2 className="text-xs font-semibold uppercase tracking-widest" style={{ color: "var(--on-surface-variant)", fontFamily: "var(--font-space-grotesk, 'Space Grotesk', sans-serif)" }}>
-              Open Positions ({open.length})
-            </h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-xs font-semibold uppercase tracking-widest" style={{ color: "var(--on-surface-variant)", fontFamily: "var(--font-space-grotesk, 'Space Grotesk', sans-serif)" }}>
+                Open Positions ({open.length})
+              </h2>
+              <button
+                onClick={() => fetchLivePrices(open)}
+                disabled={liveLoading}
+                className="flex items-center gap-1 text-xs transition-colors disabled:opacity-40"
+                style={{ color: "var(--on-surface-variant)" }}
+                title="Refresh live prices"
+              >
+                <RefreshCw size={11} className={liveLoading ? "animate-spin" : ""} />
+                Live
+              </button>
+            </div>
             {open.map((trade) => {
               const days = daysBetween(trade.entry_date, today());
               const isClosing = closingId === trade.id;
+              const livePrice = livePrices[trade.ticker] ?? null;
+
+              // Position monitor calculations
+              const unrealizedPnL = livePrice !== null ? (livePrice - trade.entry_price) * trade.shares : null;
+              const unrealizedPct = livePrice !== null ? ((livePrice - trade.entry_price) / trade.entry_price) * 100 : null;
+              const target = trade.stop_price && trade.stop_price < trade.entry_price
+                ? trade.entry_price + 3 * (trade.entry_price - trade.stop_price)
+                : null;
+              const stopBuffer = livePrice !== null && trade.stop_price
+                ? ((livePrice - trade.stop_price) / trade.entry_price) * 100
+                : null;
+              const targetBuffer = livePrice !== null && target
+                ? ((target - livePrice) / trade.entry_price) * 100
+                : null;
+
+              // Status badge
+              let statusLabel = "";
+              let statusStyle = "";
+              if (livePrice !== null) {
+                if (trade.stop_price && livePrice <= trade.stop_price) {
+                  statusLabel = "Stopped Out"; statusStyle = "bg-red-900/60 text-red-300 border-red-700";
+                } else if (stopBuffer !== null && stopBuffer < 5) {
+                  statusLabel = "Near Stop"; statusStyle = "bg-orange-900/60 text-orange-300 border-orange-700";
+                } else if (targetBuffer !== null && targetBuffer < 5) {
+                  statusLabel = "Near Target"; statusStyle = "bg-green-900/60 text-green-300 border-green-700";
+                } else if (unrealizedPct !== null && unrealizedPct < 0) {
+                  statusLabel = "Review"; statusStyle = "bg-yellow-900/60 text-yellow-300 border-yellow-700";
+                } else if (unrealizedPct !== null && unrealizedPct >= 0) {
+                  statusLabel = "On Track"; statusStyle = "bg-[#1a2e1e] text-[#43ed9e] border-[#2d4a32]";
+                }
+              }
+
               return (
                 <Card key={trade.id} className="border-0" style={{ backgroundColor: "var(--surface-container)" }}>
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between">
-                      <div>
+                      <div className="flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-bold text-white text-lg">{trade.ticker}</span>
                           <Badge className={`text-xs border ${strategyColor[trade.strategy as Strategy]}`}>
                             {strategyLabel[trade.strategy as Strategy]}
                           </Badge>
+                          {statusLabel && (
+                            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${statusStyle}`}>
+                              {statusLabel}
+                            </span>
+                          )}
                         </div>
                         <div className="text-sm text-gray-400 mt-1">
                           {trade.shares.toLocaleString()} shares · Entry ${trade.entry_price.toFixed(2)}
@@ -394,7 +463,41 @@ export default function JournalManager({ initial }: { initial: Trade[] }) {
                             <span className="text-red-400"> · Stop ${trade.stop_price.toFixed(2)}</span>
                           )}
                         </div>
-                        <div className="text-xs text-gray-500 mt-0.5">
+
+                        {/* Live P&L monitor */}
+                        {livePrice !== null && (
+                          <div className="mt-2 flex flex-wrap gap-3 rounded-lg px-3 py-2 bg-[#0e141a]">
+                            <div className="text-xs">
+                              <span className="text-gray-500">Live </span>
+                              <span className="font-mono font-semibold text-white">${livePrice.toFixed(2)}</span>
+                            </div>
+                            <div className="text-xs">
+                              <span className="text-gray-500">P&L </span>
+                              <span className={`font-mono font-semibold ${(unrealizedPnL ?? 0) >= 0 ? "text-[#43ed9e]" : "text-[#ffb3ae]"}`}>
+                                {(unrealizedPnL ?? 0) >= 0 ? "+" : ""}${unrealizedPnL!.toFixed(2)}
+                                <span className="font-normal ml-1 opacity-70">({unrealizedPct! >= 0 ? "+" : ""}{unrealizedPct!.toFixed(2)}%)</span>
+                              </span>
+                            </div>
+                            {stopBuffer !== null && (
+                              <div className="text-xs">
+                                <span className="text-gray-500">Stop buffer </span>
+                                <span className={`font-mono font-semibold ${stopBuffer < 5 ? "text-[#ffb3ae]" : "text-gray-300"}`}>
+                                  {stopBuffer.toFixed(1)}%
+                                </span>
+                              </div>
+                            )}
+                            {targetBuffer !== null && target !== null && (
+                              <div className="text-xs">
+                                <span className="text-gray-500">To target </span>
+                                <span className="font-mono font-semibold text-[#43ed9e]">
+                                  {targetBuffer.toFixed(1)}% (${target.toFixed(2)})
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        <div className="text-xs text-gray-500 mt-1.5">
                           {formatDate(trade.entry_date)} · {days === 0 ? "today" : `${days}d held`}
                         </div>
                         {trade.notes && (
