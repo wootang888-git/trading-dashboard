@@ -100,6 +100,12 @@ interface OpenPositionSummary {
   nearStop: string[];   // tickers near their stop
 }
 
+interface OpenTrade {
+  ticker: string;
+  entry_price: number;
+  stop_price: number | null;
+}
+
 export default function SignalDashboard({ initial }: { initial: DashboardData }) {
   const [data, setData] = useState<DashboardData>(initial);
   const [loading, setLoading] = useState(false);
@@ -111,6 +117,10 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
   const prevScores = useRef<Map<string, number>>(
     new Map(initial.signals.map((s) => [s.ticker, s.convictionScore]))
   );
+  // Sprint D: open trades for stop/entry alerts
+  const openTradesRef = useRef<OpenTrade[]>([]);
+  const alertedStopRef = useRef<Set<string>>(new Set());    // key: ticker
+  const alertedEntryRef = useRef<Set<string>>(new Set());   // key: `${ticker}-${entryPrice}`
 
   useNotificationPermission();
 
@@ -142,6 +152,8 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
           })
           .map((t) => t.ticker);
 
+        // Store for Sprint D refresh-loop alerts
+        openTradesRef.current = openTrades;
         setOpenPositions({ count: openTrades.length, nearStop });
       } catch { /* silent — morning brief is non-critical */ }
     }
@@ -163,11 +175,10 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
       if (!res.ok) return;
       const newData: DashboardData = await res.json();
 
-      // Check for Watch→Trade crossings and fire browser notifications
+      // ── Alert 1: Watch → Trade crossing ──
       for (const signal of newData.signals) {
         const prev = prevScores.current.get(signal.ticker) ?? 0;
         const curr = signal.convictionScore;
-        // Was below trade threshold, now at or above it
         if (prev < TRADE_THRESHOLD && curr >= TRADE_THRESHOLD) {
           notify(
             `${signal.ticker} crossed Trade threshold`,
@@ -175,9 +186,54 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
           );
         }
       }
-      // Update previous scores map
       prevScores.current = new Map(newData.signals.map((s) => [s.ticker, s.convictionScore]));
       setData(newData);
+
+      // ── Alert 2 & 3: Stop proximity + Entry trigger (Sprint D) ──
+      const openTrades = openTradesRef.current;
+      if (openTrades.length === 0) return;
+
+      const tradeTickers = [...new Set(openTrades.map((t) => t.ticker))].join(",");
+      const priceRes = await fetch(`/api/current-prices?tickers=${tradeTickers}`);
+      if (!priceRes.ok) return;
+      const prices: Record<string, number | null> = await priceRes.json();
+
+      for (const trade of openTrades) {
+        const live = prices[trade.ticker];
+        if (!live) continue;
+
+        // Alert 2: price within 5% of stop loss
+        if (trade.stop_price && !alertedStopRef.current.has(trade.ticker)) {
+          const bufferPct = ((live - trade.stop_price) / trade.entry_price) * 100;
+          if (bufferPct < 5) {
+            notify(
+              `⚠ ${trade.ticker} approaching stop loss`,
+              `Live $${live.toFixed(2)} — stop at $${trade.stop_price.toFixed(2)} (${bufferPct.toFixed(1)}% buffer). Review your position.`
+            );
+            alertedStopRef.current.add(trade.ticker);
+          }
+        }
+        // Clear stop alert if price recovers above 8% buffer (reset so it can alert again if needed)
+        if (trade.stop_price && alertedStopRef.current.has(trade.ticker)) {
+          const bufferPct = ((live - trade.stop_price) / trade.entry_price) * 100;
+          if (bufferPct >= 8) alertedStopRef.current.delete(trade.ticker);
+        }
+      }
+
+      // Alert 3: entry trigger hit for Trade-tier signals (buy-stop triggered)
+      for (const signal of newData.signals) {
+        if (signal.convictionScore < TRADE_THRESHOLD || !signal.entryPrice) continue;
+        const alertKey = `${signal.ticker}-${signal.entryPrice}`;
+        if (alertedEntryRef.current.has(alertKey)) continue;
+        const live = prices[signal.ticker];
+        if (live && live >= signal.entryPrice) {
+          notify(
+            `🟢 ${signal.ticker} entry trigger hit`,
+            `Live $${live.toFixed(2)} ≥ entry $${signal.entryPrice.toFixed(2)}. Buy stop order may have filled.`
+          );
+          alertedEntryRef.current.add(alertKey);
+        }
+      }
     } finally {
       setLoading(false);
       setCountdown(REFRESH_INTERVAL / 1000);

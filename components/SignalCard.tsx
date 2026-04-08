@@ -1,9 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, BookOpen, Check, AlertCircle } from "lucide-react";
 import SAModal from "./SAModal";
 import StockChart from "./StockChart";
+
+function todayStr() {
+  return new Date().toISOString().split("T")[0];
+}
 
 interface SAInfo {
   earningsDays: number | null;
@@ -100,8 +104,16 @@ export default function SignalCard({
   const [modalOpen, setModalOpen] = useState(false);
   const [showChart, setShowChart] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const [showValidation, setShowValidation] = useState(false); // collapsed by default
+  const [showValidation, setShowValidation] = useState(false);
   const [activeTip, setActiveTip] = useState<string | null>(null);
+
+  // Sprint C: One-click trade log
+  const [logOpen, setLogOpen] = useState(false);
+  const [logShares, setLogShares] = useState("");
+  const [logDate, setLogDate] = useState(todayStr());
+  const [logLoading, setLogLoading] = useState(false);
+  const [logSuccess, setLogSuccess] = useState(false);
+  const [logError, setLogError] = useState("");
 
   const isAI = convictionScore >= 90 && validation.passed;
   const changePositive = changePct >= 0;
@@ -408,7 +420,7 @@ export default function SignalCard({
               </div>
             )}
 
-            {/* Action row: chart + calculator */}
+            {/* Action row: chart + calculator + log trade */}
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setShowChart((v) => !v)}
@@ -425,7 +437,110 @@ export default function SignalCard({
                   Size
                 </button>
               )}
+              <button
+                onClick={(e) => { e.stopPropagation(); setLogOpen((v) => !v); setLogError(""); setLogSuccess(false); }}
+                className={`flex items-center gap-1 text-xs px-3 py-1 rounded-lg transition-colors font-medium ${
+                  logSuccess
+                    ? "bg-[#43ed9e]/20 text-[#43ed9e]"
+                    : logOpen
+                    ? "bg-[#2f353c] text-[#dde3ec]"
+                    : "bg-[#252b31] text-[#bacbbd] hover:bg-[#2f353c] hover:text-[#dde3ec]"
+                }`}
+                title="Log this trade to journal"
+              >
+                {logSuccess ? <Check size={11} /> : <BookOpen size={11} />}
+                {logSuccess ? "Logged!" : "Log Trade"}
+              </button>
             </div>
+
+            {/* Log Trade inline form */}
+            {logOpen && !logSuccess && (
+              <div className="mt-2 rounded-lg bg-[#0e141a] p-3 space-y-2" onClick={(e) => e.stopPropagation()}>
+                <p className="text-[10px] text-[#bacbbd]/60 uppercase tracking-widest">Log to journal</p>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <label className="text-[#bacbbd]/60 block mb-1">Shares</label>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      placeholder="0"
+                      value={logShares}
+                      onChange={(e) => setLogShares(e.target.value)}
+                      className="w-full rounded px-2 py-1.5 bg-[#252b31] text-[#dde3ec] border border-[#3c4a40]/30 focus:outline-none focus:border-[#43ed9e]/40 text-xs"
+                      autoFocus
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[#bacbbd]/60 block mb-1">Entry date</label>
+                    <input
+                      type="date"
+                      value={logDate}
+                      onChange={(e) => setLogDate(e.target.value)}
+                      className="w-full rounded px-2 py-1.5 bg-[#252b31] text-[#dde3ec] border border-[#3c4a40]/30 focus:outline-none focus:border-[#43ed9e]/40 text-xs"
+                    />
+                  </div>
+                </div>
+                <div className="text-[10px] text-[#bacbbd]/50 space-y-0.5">
+                  <p>Ticker: <span className="text-[#dde3ec]">{ticker}</span> · Strategy: <span className="text-[#dde3ec]">{strategy.replace(/_/g, " ")}</span></p>
+                  <p>Entry: <span className="text-[#dde3ec]">${entryPrice?.toFixed(2) ?? "—"}</span> · Stop: <span className="text-[#ffb3ae]">${stopPrice?.toFixed(2) ?? "—"}</span></p>
+                </div>
+                {logError && (
+                  <div className="flex items-center gap-1.5 text-[10px] text-[#ffb3ae]">
+                    <AlertCircle size={10} />
+                    {logError}
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <button
+                    disabled={logLoading}
+                    onClick={async () => {
+                      setLogError("");
+                      const sh = parseInt(logShares);
+                      if (!(sh > 0)) { setLogError("Enter number of shares."); return; }
+                      setLogLoading(true);
+                      try {
+                        const res = await fetch("/api/trades", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            ticker,
+                            entry_price: entryPrice,
+                            stop_price: stopPrice ?? null,
+                            exit_price: null,
+                            shares: sh,
+                            entry_date: logDate,
+                            exit_date: null,
+                            strategy,
+                            notes: `Signal conviction ${convictionScore}/100 — logged from dashboard`,
+                          }),
+                        });
+                        if (res.ok) {
+                          setLogSuccess(true);
+                          setLogOpen(false);
+                          setTimeout(() => setLogSuccess(false), 3000);
+                        } else {
+                          const j = await res.json();
+                          setLogError(j.error ?? "Failed to log trade.");
+                        }
+                      } finally {
+                        setLogLoading(false);
+                      }
+                    }}
+                    className="flex-1 text-xs font-semibold py-1.5 rounded transition-colors disabled:opacity-50"
+                    style={{ backgroundColor: "var(--primary)", color: "var(--on-primary)" }}
+                  >
+                    {logLoading ? "Logging…" : "Confirm & Log"}
+                  </button>
+                  <button
+                    onClick={() => { setLogOpen(false); setLogError(""); }}
+                    className="text-xs px-3 py-1.5 rounded bg-[#252b31] text-[#bacbbd] hover:bg-[#2f353c] transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
 
             {showChart && (
               <StockChart
