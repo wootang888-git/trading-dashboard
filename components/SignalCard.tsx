@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ChevronDown, ChevronUp, BookOpen, Check, AlertCircle } from "lucide-react";
 import SAModal from "./SAModal";
 import StockChart from "./StockChart";
+import FAQModal from "./FAQModal";
 
 function todayStr() {
   return new Date().toISOString().split("T")[0];
@@ -102,6 +103,7 @@ export default function SignalCard({
   strategy, conditions, sa, onOpenCalc,
 }: SignalCardProps) {
   const [modalOpen, setModalOpen] = useState(false);
+  const [faqOpen, setFaqOpen] = useState(false);
   const [showChart, setShowChart] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [showValidation, setShowValidation] = useState(false);
@@ -166,8 +168,11 @@ export default function SignalCard({
                 {ticker}
               </span>
               {isAI && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#00e7f6]/10 text-[#00e7f6] font-bold tracking-widest uppercase border border-[#00e7f6]/15">
-                  AI
+                <span
+                  className="text-[10px] px-1.5 py-0.5 rounded bg-[#00e7f6]/10 text-[#00e7f6] font-bold tracking-widest uppercase border border-[#00e7f6]/15 cursor-pointer hover:bg-[#00e7f6]/20 transition-colors"
+                  onClick={(e) => { e.stopPropagation(); setFaqOpen(true); }}
+                >
+                  Top Pick
                 </span>
               )}
               {earningsWarning && (
@@ -181,11 +186,14 @@ export default function SignalCard({
             </p>
           </div>
 
-          {/* Signal badge */}
+          {/* Signal badge — tap opens FAQ */}
           <div className="shrink-0 hidden sm:block">
-            <span className={`text-[10px] px-2.5 py-1 rounded font-bold tracking-widest uppercase ${badge.cls}`}>
+            <button
+              className={`text-[10px] px-2.5 py-1 rounded font-bold tracking-widest uppercase cursor-pointer ${badge.cls}`}
+              onClick={(e) => { e.stopPropagation(); setFaqOpen(true); }}
+            >
               {badge.label}
-            </span>
+            </button>
           </div>
 
           {/* Entry price */}
@@ -197,7 +205,11 @@ export default function SignalCard({
           )}
 
           {/* Conviction bar */}
-          <div className="w-16 shrink-0 hidden sm:block">
+          <div
+            className="w-16 shrink-0 hidden sm:block cursor-pointer"
+            onClick={(e) => { e.stopPropagation(); setFaqOpen(true); }}
+            title="How is this score calculated?"
+          >
             <div className="w-full bg-[#252b31] h-1 rounded-full overflow-hidden">
               <div
                 className="h-full rounded-full transition-all"
@@ -562,6 +574,8 @@ export default function SignalCard({
           sa={sa}
         />
       )}
+
+      <FAQModal open={faqOpen} onClose={() => setFaqOpen(false)} />
     </>
   );
 }

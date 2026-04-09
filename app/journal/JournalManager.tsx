@@ -174,6 +174,7 @@ export default function JournalManager({ initial }: { initial: Trade[] }) {
   // Live prices for open positions
   const [livePrices, setLivePrices] = useState<Record<string, number | null>>({});
   const [liveLoading, setLiveLoading] = useState(false);
+  const [targetFormulaId, setTargetFormulaId] = useState<string | null>(null);
 
   const open = trades.filter((t) => !t.exit_date);
   const closed = trades.filter((t) => t.exit_date);
@@ -488,10 +489,26 @@ export default function JournalManager({ initial }: { initial: Trade[] }) {
                             )}
                             {targetBuffer !== null && target !== null && (
                               <div className="text-xs">
-                                <span className="text-gray-500">To target </span>
-                                <span className="font-mono font-semibold text-[#43ed9e]">
-                                  {targetBuffer.toFixed(1)}% (${target.toFixed(2)})
-                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setTargetFormulaId(targetFormulaId === trade.id ? null : trade.id!)}
+                                  className="flex items-center gap-1 group"
+                                >
+                                  <span className="text-gray-500">To target </span>
+                                  <span className="font-mono font-semibold text-[#43ed9e]">
+                                    {targetBuffer.toFixed(1)}% (${target.toFixed(2)})
+                                  </span>
+                                  <span className="text-gray-600 group-hover:text-gray-400 transition-colors ml-0.5">
+                                    {targetFormulaId === trade.id ? "▴" : "▾"}
+                                  </span>
+                                </button>
+                                {targetFormulaId === trade.id && (
+                                  <div className="mt-1.5 ml-0 rounded bg-[#161c22] px-2.5 py-2 text-[10px] text-gray-400 leading-relaxed space-y-1">
+                                    <p><span className="text-white font-medium">Formula:</span> Target = Entry + 3 × (Entry − Stop)</p>
+                                    <p><span className="text-white font-medium">% shown:</span> (Target − Live Price) ÷ Entry Price</p>
+                                    <p className="text-gray-500">A high % means the stock is still far from its 3:1 reward target — either it has not moved yet, or it moved against you.</p>
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>

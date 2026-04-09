@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { TradeResult, WatchlistSignalSnapshot } from "@/lib/backtest";
+import StepperInput from "@/components/StepperInput";
 
 type IncludeMode = "both" | "trade" | "watch";
 
@@ -290,49 +291,98 @@ export default function BacktestPage() {
             </select>
             <p className="text-[10px] text-slate-400 mt-1">Trade: strong signal score, Watch: 82% fib alert.</p>
           </label>
-          <label className="text-xs text-slate-200">Min score (higher = fewer signals)
-            <input value={minScore} onChange={(e) => setMinScore(Number(e.target.value))} type="number" min={1} max={10} className="w-full rounded bg-[#1c2c28] border border-[#3f5b51] mt-1 p-2 text-sm" />
-            <p className="text-[10px] text-slate-400 mt-1">Minimum signal confidence needed to treat a setup as high conviction. 4-6 is typical for swing trading.</p>
-          </label>
-          <label className="text-xs text-slate-200">Top N signals (journal pick)
-            <input value={topN} onChange={(e) => setTopN(Number(e.target.value))} type="number" min={1} max={10} className="w-full rounded bg-[#1c2c28] border border-[#3f5b51] mt-1 p-2 text-sm" />
-            <p className="text-[10px] text-slate-400 mt-1">Ranks watchlist tickers by conviction score and keeps the top N setups. Think of it as your journal pick of strongest entries.</p>
-          </label>
+          <StepperInput
+            label="Min score (higher = fewer signals)"
+            value={minScore}
+            onChange={setMinScore}
+            min={1}
+            max={10}
+            step={1}
+            hint="Minimum signal confidence. 4–6 is typical for swing trading."
+          />
+          <StepperInput
+            label="Top N signals (journal pick)"
+            value={topN}
+            onChange={setTopN}
+            min={1}
+            max={10}
+            step={1}
+            hint="Keeps the top N setups by conviction score — your journal pick."
+          />
           <label className="text-xs text-slate-200">Trend filter (MA20 &gt; MA50)
             <input type="checkbox" checked={trendFilter} onChange={(e) => setTrendFilter(e.target.checked)} className="ml-2" />
           </label>
           <label className="text-xs text-slate-200">Require breakout
             <input type="checkbox" checked={requireBreakout} onChange={(e) => setRequireBreakout(e.target.checked)} className="ml-2" />
           </label>
-          <label className="text-xs text-slate-200">Max entry gap %
-            <input value={maxEntryGapPct} onChange={(e) => setMaxEntryGapPct(Number(e.target.value))} type="number" min={0} max={20} step={0.5} className="w-full rounded bg-[#1c2c28] border border-[#3f5b51] mt-1 p-2 text-sm" />
-            <p className="text-[10px] text-slate-400 mt-1">Skip trades where the next open jumps more than this percentage from signal close, reducing gap risk.</p>
-          </label>
-          <label className="text-xs text-slate-200">Min hold days
-            <input value={minHoldDays} onChange={(e) => setMinHoldDays(Number(e.target.value))} type="number" min={0} max={20} className="w-full rounded bg-[#1c2c28] border border-[#3f5b51] mt-1 p-2 text-sm" />
-            <p className="text-[10px] text-slate-400 mt-1">Minimum days to hold a trade before considering exit rules, helps avoid noise exits.</p>
-          </label>
-          <label className="text-xs text-slate-200">Fixed shares
-            <input value={fixedShares} onChange={(e) => setFixedShares(Number(e.target.value))} type="number" min={1} max={1000} className="w-full rounded bg-[#1c2c28] border border-[#3f5b51] mt-1 p-2 text-sm" />
-          </label>
-          <label className="text-xs text-slate-200">ATR period
-            <input value={atrPeriod} onChange={(e) => setAtrPeriod(Number(e.target.value))} type="number" min={5} max={30} className="w-full rounded bg-[#1c2c28] border border-[#3f5b51] mt-1 p-2 text-sm" />
-            <p className="text-[10px] text-slate-400 mt-1">Volatility window used for stop distance. Higher value smooths movement and gives wider stops.</p>
-          </label>
-          <label className="text-xs text-slate-200">Target multiplier (R)
-            <input value={tpMultiplier} onChange={(e) => setTpMultiplier(Number(e.target.value))} type="number" min={1} max={3} step={0.1} className="w-full rounded bg-[#1c2c28] border border-[#3f5b51] mt-1 p-2 text-sm" />
-            <p className="text-[10px] text-slate-400 mt-1">Set profit target as multiples of your risk (e.g., 1.5 for 1.5:1 reward:risk).</p>
-          </label>
-          <label className="text-xs text-slate-200">Max hold days
-            <input value={maxHoldDays} onChange={(e) => setMaxHoldDays(Number(e.target.value))} type="number" min={5} max={90} className="w-full rounded bg-[#1c2c28] border border-[#3f5b51] mt-1 p-2 text-sm" />
-          </label>
+          <StepperInput
+            label="Max entry gap %"
+            value={maxEntryGapPct}
+            onChange={setMaxEntryGapPct}
+            min={0}
+            max={20}
+            step={0.5}
+            decimal
+            hint="Skip trades where next open jumps more than this % from signal close."
+          />
+          <StepperInput
+            label="Min hold days"
+            value={minHoldDays}
+            onChange={setMinHoldDays}
+            min={0}
+            max={20}
+            step={1}
+            hint="Minimum days to hold before exit rules apply."
+          />
+          <StepperInput
+            label="Fixed shares"
+            value={fixedShares}
+            onChange={setFixedShares}
+            min={1}
+            max={1000}
+            step={1}
+          />
+          <StepperInput
+            label="ATR period"
+            value={atrPeriod}
+            onChange={setAtrPeriod}
+            min={5}
+            max={30}
+            step={1}
+            hint="Volatility window for stop distance. Higher = wider stops."
+          />
+          <StepperInput
+            label="Target multiplier (R)"
+            value={tpMultiplier}
+            onChange={setTpMultiplier}
+            min={1}
+            max={3}
+            step={0.1}
+            decimal
+            hint="Profit target as a multiple of risk (e.g. 1.5 = 1.5:1 reward:risk)."
+          />
+          <StepperInput
+            label="Max hold days"
+            value={maxHoldDays}
+            onChange={setMaxHoldDays}
+            min={5}
+            max={90}
+            step={1}
+          />
           <div className="col-span-1 md:col-span-2 border border-[#2f4340] p-3 rounded-lg bg-[#10231f]">
             <h3 className="text-sm text-white font-semibold mb-2">Reporting settings</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <label className="text-xs text-slate-200">Top X Conviction & Best Performers
-                <input value={reportTopCount} onChange={(e) => setReportTopCount(Math.max(5, Math.min(Number(e.target.value), Math.min(100, Math.max(5, activeSignals.length || 5)))))} type="number" min={5} max={Math.min(100, Math.max(5, activeSignals.length || 5))} className="w-full rounded bg-[#1c2c28] border border-[#3f5b51] mt-1 p-2 text-sm" />
-                <p className="text-[10px] text-slate-400 mt-1">Number of top conviction tickers and best performers to show in results (5-100, based on watchlist size).</p>
-              </label>
+              <div>
+                <StepperInput
+                  label="Show top N results"
+                  value={reportTopCount}
+                  onChange={(v) => setReportTopCount(Math.max(5, Math.min(v, Math.min(100, Math.max(5, activeSignals.length || 5)))))}
+                  min={5}
+                  max={Math.min(100, Math.max(5, activeSignals.length || 5))}
+                  step={1}
+                  hint={`Controls rows in the results tables below. Max: ${Math.min(100, Math.max(5, activeSignals.length || 5))} based on watchlist.`}
+                />
+              </div>
               <div className="text-xs text-slate-200">
                 <label className="inline-flex items-center">
                   <input type="checkbox" checked={sweepMode} onChange={(e) => setSweepMode(e.target.checked)} className="mr-2" /> Auto sweep run
