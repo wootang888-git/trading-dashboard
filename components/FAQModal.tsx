@@ -46,7 +46,7 @@ export default function FAQModal({ open, onClose }: FAQModalProps) {
       >
         {/* Header */}
         <div className="sticky top-0 bg-[#0e141a] flex items-center justify-between px-5 py-4 border-b border-[#3c4a40]/20 z-10">
-          <p className="text-[18px] font-bold text-[#dde3ec] font-['Space_Grotesk']">How SwingAI Scores Signals</p>
+          <p className="text-[16px] md:text-[18px] font-bold text-[#dde3ec] font-['Space_Grotesk']">How SwingAI Scores Signals</p>
           <button
             onClick={onClose}
             className="w-7 h-7 rounded-full bg-[#252b31] flex items-center justify-center hover:bg-[#2f353c] transition-colors"
@@ -55,12 +55,12 @@ export default function FAQModal({ open, onClose }: FAQModalProps) {
           </button>
         </div>
 
-        {/* Content */}
-        <div className="px-5 py-5 space-y-6 text-[#bacbbd]">
+        {/* Content — extra right padding on mobile to prevent bleed */}
+        <div className="pl-5 pr-7 py-5 md:px-5 space-y-6 text-[#bacbbd]">
 
           {/* Conviction Score */}
           <section>
-            <h3 className="text-[14px] font-bold uppercase tracking-widest text-[#bacbbd]/50 mb-3">
+            <h3 className="text-[12px] md:text-[14px] font-bold uppercase tracking-widest text-[#bacbbd]/50 mb-3">
               Conviction Score (0–100)
             </h3>
             <div className="space-y-2.5">
@@ -71,12 +71,12 @@ export default function FAQModal({ open, onClose }: FAQModalProps) {
                 { label: "Data quality", pts: "15 pts", desc: "Validation checks all pass = full points" },
               ].map(({ label, pts, desc }) => (
                 <div key={label} className="flex items-start gap-3">
-                  <span className="text-[14px] font-bold text-[#43ed9e] bg-[#43ed9e]/10 rounded px-1.5 py-0.5 shrink-0 mt-0.5 w-16 text-center">
+                  <span className="text-[12px] md:text-[14px] font-bold text-[#43ed9e] bg-[#43ed9e]/10 rounded px-1.5 py-0.5 shrink-0 mt-0.5 w-16 text-center">
                     {pts}
                   </span>
                   <div>
-                    <p className="text-[16px] font-medium text-[#dde3ec]">{label}</p>
-                    <p className="text-[14px] text-[#bacbbd]/60 mt-0.5">{desc}</p>
+                    <p className="text-[14px] md:text-[16px] font-medium text-[#dde3ec]">{label}</p>
+                    <p className="text-[12px] md:text-[14px] text-[#bacbbd]/60 mt-0.5">{desc}</p>
                   </div>
                 </div>
               ))}
@@ -87,7 +87,7 @@ export default function FAQModal({ open, onClose }: FAQModalProps) {
 
           {/* Signal Tiers */}
           <section>
-            <h3 className="text-[14px] font-bold uppercase tracking-widest text-[#bacbbd]/50 mb-3">
+            <h3 className="text-[12px] md:text-[14px] font-bold uppercase tracking-widest text-[#bacbbd]/50 mb-3">
               Signal Tiers
             </h3>
             <div className="space-y-2">
@@ -116,10 +116,10 @@ export default function FAQModal({ open, onClose }: FAQModalProps) {
               ].map(({ range, label, color, bg, desc }) => (
                 <div key={range} className={`rounded-lg p-3 ${bg}`}>
                   <div className="flex items-center gap-2 mb-1">
-                    <span className={`text-[14px] font-bold ${color}`}>{range}</span>
-                    <span className={`text-[14px] font-bold uppercase tracking-wider ${color}`}>{label}</span>
+                    <span className={`text-[12px] md:text-[14px] font-bold ${color}`}>{range}</span>
+                    <span className={`text-[12px] md:text-[14px] font-bold uppercase tracking-wider ${color}`}>{label}</span>
                   </div>
-                  <p className="text-[14px] text-[#bacbbd]/70">{desc}</p>
+                  <p className="text-[12px] md:text-[14px] text-[#bacbbd]/70">{desc}</p>
                 </div>
               ))}
             </div>
@@ -129,10 +129,10 @@ export default function FAQModal({ open, onClose }: FAQModalProps) {
 
           {/* BB %B */}
           <section>
-            <h3 className="text-[14px] font-bold uppercase tracking-widest text-[#bacbbd]/50 mb-3">
+            <h3 className="text-[12px] md:text-[14px] font-bold uppercase tracking-widest text-[#bacbbd]/50 mb-3">
               BB %B (Bollinger Band %)
             </h3>
-            <p className="text-[14px] text-[#bacbbd]/60 mb-3">
+            <p className="text-[12px] md:text-[14px] text-[#bacbbd]/60 mb-3">
               Shows where price sits inside its normal trading range (upper and lower Bollinger Bands).
             </p>
             <div className="space-y-2">
@@ -144,10 +144,10 @@ export default function FAQModal({ open, onClose }: FAQModalProps) {
                 <div key={range} className="flex items-start gap-3">
                   <div className={`w-2.5 h-2.5 rounded-full ${dot} shrink-0 mt-1`} />
                   <div>
-                    <p className="text-[14px]">
+                    <p className="text-[12px] md:text-[14px]">
                       <span className={`font-bold ${color}`}>{range} — {label}</span>
                     </p>
-                    <p className="text-[14px] text-[#bacbbd]/60 mt-0.5">{desc}</p>
+                    <p className="text-[12px] md:text-[14px] text-[#bacbbd]/60 mt-0.5">{desc}</p>
                   </div>
                 </div>
               ))}
@@ -158,14 +158,14 @@ export default function FAQModal({ open, onClose }: FAQModalProps) {
 
           {/* Target Price */}
           <section>
-            <h3 className="text-[14px] font-bold uppercase tracking-widest text-[#bacbbd]/50 mb-3">
+            <h3 className="text-[12px] md:text-[14px] font-bold uppercase tracking-widest text-[#bacbbd]/50 mb-3">
               Target Price
             </h3>
-            <div className="rounded-lg bg-[#161c22] p-3 space-y-2 font-mono text-[15px]">
+            <div className="rounded-lg bg-[#161c22] p-3 space-y-2 font-mono text-[13px] md:text-[15px] break-words">
               <p className="text-[#dde3ec]">Target = Entry + 3 × (Entry − Stop)</p>
               <p className="text-[#bacbbd]/60">3:1 reward-to-risk ratio</p>
             </div>
-            <p className="text-[14px] text-[#bacbbd]/60 mt-2.5 leading-relaxed">
+            <p className="text-[12px] md:text-[14px] text-[#bacbbd]/60 mt-2.5 leading-relaxed">
               <span className="text-[#dde3ec] font-medium">"To target %"</span> shows how far the current live price is from the target, as a percentage of your entry price. A high percentage means the stock is far from the target — either because it has not moved yet, or it moved against you.
             </p>
           </section>

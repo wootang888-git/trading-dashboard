@@ -187,9 +187,9 @@ export default function SignalCard({
           </div>
 
           {/* Signal badge — tap opens FAQ */}
-          <div className="shrink-0 hidden sm:block">
+          <div className="shrink-0">
             <button
-              className={`text-[10px] px-2.5 py-1 rounded font-bold tracking-widest uppercase cursor-pointer ${badge.cls}`}
+              className={`text-[7px] px-1.5 py-0.5 md:text-[10px] md:px-2.5 md:py-1 rounded font-bold tracking-widest uppercase cursor-pointer ${badge.cls}`}
               onClick={(e) => { e.stopPropagation(); setFaqOpen(true); }}
             >
               {badge.label}
