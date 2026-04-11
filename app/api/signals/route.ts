@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getWatchlist } from "@/lib/supabase";
+import { getWatchlist, getMlScores, getMlDiscoveries, getMlPerformance } from "@/lib/supabase";
 import { getQuote, getHistorical, getNews, HistoricalBar } from "@/lib/yahoo";
 import { buildSignal } from "@/lib/signals";
 import { SECTOR_ETF } from "@/lib/watchlist";
@@ -17,9 +17,15 @@ function sentimentFromTitle(title: string): "positive" | "negative" | "neutral" 
 
 export async function GET() {
   const watchlist = await getWatchlist();
+  const watchlistTickers = watchlist.map((w) => w.ticker);
 
-  // Fetch SPY bars once upfront for RS calculations
-  const spyBars = await getHistorical("SPY", 90);
+  // Fetch ML data + SPY bars in parallel
+  const [spyBars, mlScores, mlDiscoveries, mlPerformance] = await Promise.all([
+    getHistorical("SPY", 90),
+    getMlScores(watchlistTickers),
+    getMlDiscoveries(watchlistTickers, 10),
+    getMlPerformance(20),
+  ]);
 
   // Fetch each unique sector ETF once and share across all tickers in that sector
   const neededSectorEtfs = [...new Set(
@@ -48,6 +54,7 @@ export async function GET() {
         ? Math.ceil((quote.earningsTimestamp.getTime() - Date.now()) / 86400000)
         : null;
 
+      const mlData = mlScores[ticker];
       return {
         ...signal,
         price: quote.price,
@@ -55,6 +62,8 @@ export async function GET() {
         changePct: quote.changePct,
         volume: quote.volume,
         avgVolume: quote.avgVolume,
+        mlScore: mlData?.ml_score_pct ?? null,
+        mlRank: mlData?.ml_rank ?? null,
         sa: {
           earningsDays: earningsDays !== null && earningsDays >= 0 && earningsDays <= 14 ? earningsDays : null,
           recentHeadline: news?.title ?? null,
@@ -73,5 +82,11 @@ export async function GET() {
     ? spySignal.indicators.isAboveMa20 ? "bull" : "bear"
     : "neutral";
 
-  return NextResponse.json({ signals, marketCondition, updatedAt: new Date().toISOString() });
+  return NextResponse.json({
+    signals,
+    mlDiscoveries,
+    mlPerformance,
+    marketCondition,
+    updatedAt: new Date().toISOString(),
+  });
 }

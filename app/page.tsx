@@ -1,5 +1,5 @@
 import SignalDashboard from "@/components/SignalDashboard";
-import { getWatchlist } from "@/lib/supabase";
+import { getWatchlist, getMlScores, getMlDiscoveries, getMlPerformance } from "@/lib/supabase";
 import { getQuote, getHistorical, getNews, HistoricalBar } from "@/lib/yahoo";
 import { buildSignal } from "@/lib/signals";
 import { SECTOR_ETF } from "@/lib/watchlist";
@@ -55,6 +55,8 @@ async function getInitialData() {
         changePct: quote.changePct,
         volume: quote.volume,
         avgVolume: quote.avgVolume,
+        prevClose: quote.prevClose,
+        open: quote.open,
         sa: {
           earningsDays: earningsDays !== null && earningsDays >= 0 && earningsDays <= 14 ? earningsDays : null,
           recentHeadline: news?.title ?? null,
@@ -72,8 +74,23 @@ async function getInitialData() {
     ? spySignal.indicators.isAboveMa20 ? "bull" : "bear"
     : "neutral";
 
+  const watchlistTickers = watchlist.map((w) => w.ticker);
+  const [mlScores, mlDiscoveries, mlPerformance] = await Promise.all([
+    getMlScores(watchlistTickers),
+    getMlDiscoveries(watchlistTickers, 10),
+    getMlPerformance(20),
+  ]);
+
+  const enrichedSignals = (signals as NonNullable<(typeof signals)[number]>[]).map((s) => ({
+    ...s,
+    mlScore: mlScores[s.ticker]?.ml_score_pct ?? null,
+    mlRank: mlScores[s.ticker]?.ml_rank ?? null,
+  }));
+
   return {
-    signals: signals as NonNullable<(typeof signals)[number]>[],
+    signals: enrichedSignals,
+    mlDiscoveries,
+    mlPerformance,
     marketCondition,
     updatedAt: new Date().toISOString(),
   };

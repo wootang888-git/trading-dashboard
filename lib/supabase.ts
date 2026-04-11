@@ -189,3 +189,77 @@ export async function logBacktestResult(result: BacktestResultLog): Promise<bool
   });
   return !error;
 }
+
+// --- ML Scores (Phase 1 — XGBoost daily ranker) ---
+
+export interface MlScore {
+  ticker: string;
+  score_date: string;
+  ml_score: number;        // 0.0–1.0 raw probability
+  ml_rank: number;         // 1 = highest score today
+  ml_score_pct: number;    // 0–100 for display
+  feature_snapshot: Record<string, number> | null;
+  fwd_pe: number | null;
+  market_cap_b: number | null;
+}
+
+export interface MlPerformanceRow {
+  ticker: string;
+  score_date: string;
+  ml_rank: number;
+  return_5d: number;
+  spy_return_5d: number | null;
+  beat_spy: boolean | null;
+}
+
+function _today(): string {
+  return new Date().toISOString().split("T")[0];
+}
+
+/** ML scores for specific watchlist tickers — used for the badge on SignalCard. */
+export async function getMlScores(
+  tickers: string[],
+  scoreDate?: string
+): Promise<Record<string, MlScore>> {
+  if (tickers.length === 0) return {};
+  const d = scoreDate ?? _today();
+  const { data } = await supabase
+    .from("ml_scores")
+    .select("ticker, ml_score, ml_rank, ml_score_pct")
+    .eq("score_date", d)
+    .in("ticker", tickers);
+  return Object.fromEntries((data ?? []).map((r) => [r.ticker, r as MlScore]));
+}
+
+/** Top-N ML discoveries NOT on the watchlist — used for the discoveries panel. */
+export async function getMlDiscoveries(
+  excludeTickers: string[],
+  limit = 10,
+  scoreDate?: string
+): Promise<MlScore[]> {
+  const d = scoreDate ?? _today();
+  let query = supabase
+    .from("ml_scores")
+    .select("ticker, ml_score, ml_rank, ml_score_pct, feature_snapshot, fwd_pe, market_cap_b")
+    .eq("score_date", d)
+    .order("ml_rank", { ascending: true })
+    .limit(limit);
+
+  // Supabase doesn't support .not().in() with empty arrays cleanly — guard it
+  if (excludeTickers.length > 0) {
+    query = query.not("ticker", "in", `(${excludeTickers.join(",")})`);
+  }
+
+  const { data } = await query;
+  return (data ?? []) as MlScore[];
+}
+
+/** Recent track record rows from ml_performance — used for MlTrackRecord card. */
+export async function getMlPerformance(limit = 20): Promise<MlPerformanceRow[]> {
+  const { data } = await supabase
+    .from("ml_performance")
+    .select("ticker, score_date, ml_rank, return_5d, spy_return_5d, beat_spy")
+    .order("score_date", { ascending: false })
+    .limit(limit);
+  return (data ?? []) as MlPerformanceRow[];
+}

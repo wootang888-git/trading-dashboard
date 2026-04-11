@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Trade } from "@/lib/supabase";
 import { Strategy } from "@/lib/watchlist";
 
-const STRATEGY_OPTIONS: Strategy[] = ["momentum", "mean_reversion", "etf_rotation"];
+const STRATEGY_OPTIONS: Strategy[] = ["momentum", "ema_pullback", "mean_reversion", "etf_rotation"];
 const strategyLabel: Record<Strategy, string> = {
   momentum: "Momentum",
   mean_reversion: "Mean Reversion",
@@ -172,7 +172,7 @@ export default function JournalManager({ initial }: { initial: Trade[] }) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   // Live prices for open positions
-  const [livePrices, setLivePrices] = useState<Record<string, number | null>>({});
+  const [livePrices, setLivePrices] = useState<Record<string, { price: number; prevClose: number; open: number } | null>>({});
   const [liveLoading, setLiveLoading] = useState(false);
   const [targetFormulaId, setTargetFormulaId] = useState<string | null>(null);
 
@@ -410,7 +410,10 @@ export default function JournalManager({ initial }: { initial: Trade[] }) {
             {open.map((trade) => {
               const days = daysBetween(trade.entry_date, today());
               const isClosing = closingId === trade.id;
-              const livePrice = livePrices[trade.ticker] ?? null;
+              const liveData = livePrices[trade.ticker] ?? null;
+              const livePrice = liveData?.price ?? null;
+              const livePrevClose = liveData?.prevClose ?? null;
+              const liveOpen = liveData?.open ?? null;
 
               // Position monitor calculations
               const unrealizedPnL = livePrice !== null ? (livePrice - trade.entry_price) * trade.shares : null;
@@ -508,6 +511,16 @@ export default function JournalManager({ initial }: { initial: Trade[] }) {
                                     <p><span className="text-white font-medium">% shown:</span> (Target − Live Price) ÷ Entry Price</p>
                                     <p className="text-gray-500">A high % means the stock is still far from its 3:1 reward target — either it has not moved yet, or it moved against you.</p>
                                   </div>
+                                )}
+                              </div>
+                            )}
+                            {(livePrevClose != null && livePrevClose > 0 || liveOpen != null && liveOpen > 0) && (
+                              <div className="flex gap-4 text-xs w-full pt-1 border-t border-white/5">
+                                {livePrevClose != null && livePrevClose > 0 && (
+                                  <span className="text-gray-500">Prev close <span className="font-mono text-gray-300">${livePrevClose.toFixed(2)}</span></span>
+                                )}
+                                {liveOpen != null && liveOpen > 0 && (
+                                  <span className="text-gray-500">Today open <span className="font-mono text-gray-300">${liveOpen.toFixed(2)}</span></span>
                                 )}
                               </div>
                             )}

@@ -5,7 +5,10 @@ import MarketBanner from "./MarketBanner";
 import MarketSessionPill from "./MarketSessionPill";
 import SignalCard from "./SignalCard";
 import CalculatorModal from "./CalculatorModal";
+import MlDiscoveries from "./MlDiscoveries";
+import MlTrackRecord from "./MlTrackRecord";
 import { RefreshCw, BookOpen } from "lucide-react";
+import { MlScore, MlPerformanceRow } from "@/lib/supabase";
 
 const REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes
 const TRADE_THRESHOLD = 82;  // Gate 1: pull the trigger
@@ -66,10 +69,16 @@ interface SignalData {
     newsUrl: string | null;
     newsPublisher: string | null;
   };
+  mlScore?: number | null;
+  mlRank?: number | null;
+  prevClose?: number | null;
+  open?: number | null;
 }
 
 interface DashboardData {
   signals: SignalData[];
+  mlDiscoveries?: MlScore[];
+  mlPerformance?: MlPerformanceRow[];
   marketCondition: "bull" | "bear" | "neutral";
   updatedAt: string;
 }
@@ -142,11 +151,11 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
         const tickers = [...new Set(openTrades.map((t) => t.ticker))].join(",");
         const priceRes = await fetch(`/api/current-prices?tickers=${tickers}`);
         if (!priceRes.ok) { setOpenPositions({ count: openTrades.length, nearStop: [] }); return; }
-        const prices: Record<string, number | null> = await priceRes.json();
+        const prices: Record<string, { price: number; prevClose: number; open: number } | null> = await priceRes.json();
 
         const nearStop = openTrades
           .filter((t) => {
-            const live = prices[t.ticker];
+            const live = prices[t.ticker]?.price;
             if (!live || !t.stop_price) return false;
             return ((live - t.stop_price) / t.entry_price) * 100 < 5;
           })
@@ -356,7 +365,7 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
           </h2>
           <div className="space-y-3">
             {trade.map((s) => (
-              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} />
+              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} />
             ))}
           </div>
         </section>
@@ -373,7 +382,7 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
           </p>
           <div className="space-y-3">
             {watch.map((s) => (
-              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} />
+              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} />
             ))}
           </div>
         </section>
@@ -387,7 +396,7 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
           </h2>
           <div className="space-y-3">
             {observe.map((s) => (
-              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} />
+              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} />
             ))}
           </div>
         </section>
@@ -397,6 +406,26 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
         <div className="text-center py-20" style={{ color: "var(--on-surface-variant)" }}>
           No signals loaded. Check your watchlist or try refreshing.
         </div>
+      )}
+
+      {/* ML Track Record — shows realized returns from past discoveries */}
+      {(data.mlPerformance?.length ?? 0) > 0 && (
+        <MlTrackRecord performance={data.mlPerformance ?? []} />
+      )}
+
+      {/* ML Discoveries — top S&P 500 picks not on watchlist */}
+      {(data.mlDiscoveries?.length ?? 0) > 0 && (
+        <MlDiscoveries
+          discoveries={data.mlDiscoveries ?? []}
+          onAddToWatchlist={async (ticker) => {
+            await fetch("/api/watchlist", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ ticker, strategy: "momentum" }),
+            });
+            refresh();
+          }}
+        />
       )}
 
       {/* Floating calculator modal */}

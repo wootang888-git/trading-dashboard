@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
   const entries = await Promise.all(
     tickers.map(async (ticker) => {
       const q = await getQuote(ticker);
-      return [ticker, q?.price ?? null] as const;
+      return [ticker, q ? { price: q.price, prevClose: q.prevClose, open: q.open } : null] as const;
     })
   );
 

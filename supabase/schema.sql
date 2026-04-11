@@ -7,6 +7,7 @@ create table if not exists trades (
   ticker text not null,
   entry_price numeric not null,
   exit_price numeric,
+  stop_price numeric,
   shares int not null,
   entry_date date not null,
   exit_date date,
@@ -14,6 +15,9 @@ create table if not exists trades (
   notes text,
   created_at timestamptz default now()
 );
+
+-- If the table already exists, add stop_price if missing:
+-- alter table trades add column if not exists stop_price numeric;
 
 -- Enable Row Level Security (makes it safe to use the public anon key)
 alter table trades enable row level security;
@@ -98,3 +102,45 @@ create table if not exists backtest_results (
 
 alter table backtest_results enable row level security;
 create policy "Allow all" on backtest_results for all using (true) with check (true);
+
+-- ML scores: one row per ticker per day, with feature snapshot
+create table if not exists ml_scores (
+  id              uuid primary key default gen_random_uuid(),
+  ticker          text not null,
+  score_date      date not null,
+  ml_score        numeric(6,4) not null,   -- 0.0–1.0 raw probability
+  ml_rank         int not null,            -- 1 = highest score today
+  ml_score_pct    int not null,            -- 0–100 for display
+  feature_snapshot jsonb,                  -- {RSI_14: 67.2, High52w_Pct: -0.03, ...}
+  fwd_pe          numeric(8,2),            -- forward P/E ratio (null if unavailable)
+  market_cap_b    numeric(8,2),            -- market cap in $B
+  computed_at     timestamptz default now(),
+  unique(ticker, score_date)
+);
+
+alter table ml_scores enable row level security;
+create policy "public read ml_scores" on ml_scores for select using (true);
+create policy "service write ml_scores" on ml_scores for all using (true);
+
+create index if not exists ml_scores_date_rank_idx on ml_scores (score_date desc, ml_rank asc);
+
+-- ML performance: actual 5-day returns for past discoveries
+create table if not exists ml_performance (
+  id              uuid primary key default gen_random_uuid(),
+  ticker          text not null,
+  score_date      date not null,           -- date the score was computed
+  check_date      date not null,           -- date return was measured (score_date + 5 bdays)
+  ml_score        numeric(6,4) not null,
+  ml_rank         int not null,
+  return_5d       numeric(8,4),            -- actual 5-day return (e.g. 0.0312 = +3.12%)
+  spy_return_5d   numeric(8,4),            -- SPY return same period
+  beat_spy        boolean,                 -- return_5d > spy_return_5d
+  checked_at      timestamptz default now(),
+  unique(ticker, score_date)
+);
+
+alter table ml_performance enable row level security;
+create policy "public read ml_performance" on ml_performance for select using (true);
+create policy "service write ml_performance" on ml_performance for all using (true);
+
+create index if not exists ml_performance_date_rank_idx on ml_performance (score_date desc, ml_rank asc);

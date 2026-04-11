@@ -219,7 +219,8 @@ function calcRelativeStrength(bars: HistoricalBar[], spyBars: HistoricalBar[]): 
 export function computeIndicators(
   bars: HistoricalBar[],
   high52w: number,
-  spyBars: HistoricalBar[] = []
+  spyBars: HistoricalBar[] = [],
+  ticker = ""
 ): Indicators {
   const zero: Indicators = {
     rsi14: 50, ma20: 0, ma50: 0, ema8: 0, ema20: 0,
@@ -281,7 +282,7 @@ export function computeIndicators(
   const trendStructureIntact = isHigherHighs && isHigherLows;
 
   // Sprint 2B: Relative Strength vs SPY
-  const isSpy = bars === spyBars; // skip RS calculation for SPY itself
+  const isSpy = ticker === "SPY"; // skip RS calculation for SPY itself
   const rsResult = (!isSpy && spyBars.length >= 21)
     ? calcRelativeStrength(bars, spyBars)
     : { rsVsSpy: null as number | null, rsRising: false, rsMakingNewHigh: false };
@@ -782,7 +783,7 @@ export function buildSignal(
   spyBars: HistoricalBar[] = [],
   sectorBars: HistoricalBar[] = []
 ): Signal {
-  const ind = computeIndicators(bars, high52w, spyBars);
+  const ind = computeIndicators(bars, high52w, spyBars, ticker);
 
   const { score, entryNote, stopNote, entryPrice, stopPrice, conditions } =
     strategy === "ema_pullback"     ? scoreEMAPullback(ind, bars)

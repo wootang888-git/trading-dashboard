@@ -51,6 +51,10 @@ interface SignalCardProps {
   conditions?: { label: string; met: boolean }[];
   sa?: SAInfo;
   onOpenCalc?: (entry: number | null, stop: number | null) => void;
+  mlScore?: number | null;
+  mlRank?: number | null;
+  prevClose?: number | null;
+  open?: number | null;
 }
 
 // Metric tile — hover on desktop, tap on mobile. Only one tooltip open at a time.
@@ -101,9 +105,12 @@ export default function SignalCard({
   atr14, macdHist, bbPct,
   entryNote, stopNote, entryPrice, stopPrice,
   strategy, conditions, sa, onOpenCalc,
+  mlScore, mlRank,
+  prevClose, open,
 }: SignalCardProps) {
   const [modalOpen, setModalOpen] = useState(false);
   const [faqOpen, setFaqOpen] = useState(false);
+  const [faqMode, setFaqMode] = useState<"conviction" | "ml">("conviction");
   const [showChart, setShowChart] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [showValidation, setShowValidation] = useState(false);
@@ -170,7 +177,7 @@ export default function SignalCard({
               {isAI && (
                 <span
                   className="text-[10px] px-1.5 py-0.5 rounded bg-[#00e7f6]/10 text-[#00e7f6] font-bold tracking-widest uppercase border border-[#00e7f6]/15 cursor-pointer hover:bg-[#00e7f6]/20 transition-colors"
-                  onClick={(e) => { e.stopPropagation(); setFaqOpen(true); }}
+                  onClick={(e) => { e.stopPropagation(); setFaqMode("conviction"); setFaqOpen(true); }}
                 >
                   Top Pick
                 </span>
@@ -178,6 +185,21 @@ export default function SignalCard({
               {earningsWarning && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-900/30 text-orange-300 border border-orange-800/30">
                   ⚠ {sa!.earningsDays === 0 ? "Earnings today" : `Earnings ${sa!.earningsDays}d`}
+                </span>
+              )}
+              {mlScore != null && (
+                <span
+                  suppressHydrationWarning
+                  className={`text-[10px] px-1.5 py-0.5 rounded font-bold border cursor-pointer hover:brightness-125 transition-all ${
+                    mlScore >= 70
+                      ? "bg-purple-900/40 text-purple-300 border-purple-700/30"
+                      : mlScore >= 50
+                      ? "bg-purple-900/20 text-purple-400 border-purple-800/20"
+                      : "bg-[#252b31] text-[#6b7280] border-[#3c4a40]/20"
+                  }`}
+                  onClick={(e) => { e.stopPropagation(); setFaqMode("ml"); setFaqOpen(true); }}
+                >
+                  ML {mlScore}%{mlRank != null && <span className="text-[#6b7280] ml-1">#{mlRank}</span>}
                 </span>
               )}
             </div>
@@ -190,7 +212,7 @@ export default function SignalCard({
           <div className="shrink-0">
             <button
               className={`text-[7px] px-1.5 py-0.5 md:text-[10px] md:px-2.5 md:py-1 rounded font-bold tracking-widest uppercase cursor-pointer ${badge.cls}`}
-              onClick={(e) => { e.stopPropagation(); setFaqOpen(true); }}
+              onClick={(e) => { e.stopPropagation(); setFaqMode("conviction"); setFaqOpen(true); }}
             >
               {badge.label}
             </button>
@@ -207,7 +229,7 @@ export default function SignalCard({
           {/* Conviction bar */}
           <div
             className="w-16 shrink-0 hidden sm:block cursor-pointer"
-            onClick={(e) => { e.stopPropagation(); setFaqOpen(true); }}
+            onClick={(e) => { e.stopPropagation(); setFaqMode("conviction"); setFaqOpen(true); }}
             title="How is this score calculated?"
           >
             <div className="w-full bg-[#252b31] h-1 rounded-full overflow-hidden">
@@ -395,6 +417,16 @@ export default function SignalCard({
             {/* Trade notes */}
             {convictionScore >= 40 && (
               <div className="space-y-1.5 mb-3 rounded-lg p-3 bg-[#0e141a]">
+                {(prevClose != null && prevClose > 0 || open != null && open > 0) && (
+                  <div className="flex items-center gap-4 text-[11px] text-[#bacbbd]/60 pb-1.5 border-b border-[#3c4a40]/20 mb-0.5">
+                    {prevClose != null && prevClose > 0 && (
+                      <span>Prev close <span className="text-[#dde3ec] font-mono">${prevClose.toFixed(2)}</span></span>
+                    )}
+                    {open != null && open > 0 && (
+                      <span>Today open <span className="text-[#dde3ec] font-mono">${open.toFixed(2)}</span></span>
+                    )}
+                  </div>
+                )}
                 <p className="text-xs font-medium text-[#43ed9e]">▲ {entryNote}</p>
                 <p className="text-xs font-medium text-[#ffb3ae]">▼ {stopNote}</p>
                 {risk && targetPrice && (
@@ -575,7 +607,7 @@ export default function SignalCard({
         />
       )}
 
-      <FAQModal open={faqOpen} onClose={() => setFaqOpen(false)} />
+      <FAQModal open={faqOpen} onClose={() => { setFaqOpen(false); setFaqMode("conviction"); }} mode={faqMode} mlScore={mlScore} mlRank={mlRank} />
     </>
   );
 }

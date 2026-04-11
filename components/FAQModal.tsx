@@ -6,9 +6,127 @@ import { X } from "lucide-react";
 interface FAQModalProps {
   open: boolean;
   onClose: () => void;
+  mode?: "conviction" | "ml";
+  mlScore?: number | null;
+  mlRank?: number | null;
 }
 
-export default function FAQModal({ open, onClose }: FAQModalProps) {
+function MlScoreContent({ mlScore, mlRank }: { mlScore?: number | null; mlRank?: number | null }) {
+  const scoreLabel =
+    mlScore == null ? null
+    : mlScore >= 70 ? { text: "High conviction", color: "text-[#45dfa4]", bg: "bg-[#45dfa4]/10" }
+    : mlScore >= 50 ? { text: "Moderate setup", color: "text-[#f9bd22]", bg: "bg-[#f9bd22]/10" }
+    : { text: "Early signal", color: "text-[#bacbbd]", bg: "bg-[#bacbbd]/10" };
+
+  return (
+    <div className="space-y-6 text-[#bacbbd]">
+
+      {/* Score callout */}
+      {mlScore != null && scoreLabel && (
+        <div className={`rounded-xl p-4 ${scoreLabel.bg} border border-white/5`}>
+          <div className="flex items-center justify-between mb-1">
+            <span className={`text-2xl font-bold font-mono ${scoreLabel.color}`}>{mlScore}%</span>
+            {mlRank != null && (
+              <span className="text-[12px] text-[#888]">#{mlRank} of ~390 S&P 500 stocks today</span>
+            )}
+          </div>
+          <p className={`text-[13px] font-bold ${scoreLabel.color}`}>{scoreLabel.text}</p>
+        </div>
+      )}
+
+      {/* Plain-language explanation */}
+      <section>
+        <h3 className="text-[12px] font-bold uppercase tracking-widest text-[#bacbbd]/50 mb-3">
+          What is the ML Score?
+        </h3>
+        <p className="text-[14px] leading-relaxed text-[#bacbbd]/80 mb-3">
+          Think of it like a <span className="text-[#dde3ec] font-medium">probability grade</span> from a computer that has studied millions of past stock setups. A score of <span className="text-[#45dfa4] font-bold">74%</span> means: "In similar situations in the past, this stock beat the market about 74% of the time over the next 5 trading days."
+        </p>
+        <p className="text-[14px] leading-relaxed text-[#bacbbd]/80">
+          It does <span className="text-[#dde3ec] font-medium">not</span> predict the future — it just tells you that the current setup looks historically favourable.
+        </p>
+      </section>
+
+      <div className="border-t border-[#3c4a40]/20" />
+
+      {/* What the model looks at */}
+      <section>
+        <h3 className="text-[12px] font-bold uppercase tracking-widest text-[#bacbbd]/50 mb-3">
+          What does the model look at?
+        </h3>
+        <div className="space-y-2.5">
+          {[
+            { icon: "📈", label: "Proximity to 52-week high", desc: "Stocks near their highs often keep climbing — momentum tends to continue." },
+            { icon: "🔊", label: "Rising volume trend", desc: "More buyers stepping in over the last 5 days vs the last 20 days. Big money is accumulating." },
+            { icon: "⚡", label: "5-day price momentum", desc: "The stock has been moving up recently — it already has wind behind it." },
+            { icon: "📊", label: "RSI (strength indicator)", desc: "Between 55–75 is the sweet spot: strong enough to be bullish, not so high it's overextended." },
+            { icon: "🏆", label: "Sector performance", desc: "Is the stock beating other stocks in its industry? Leadership within a sector is a good sign." },
+            { icon: "🌍", label: "Market regime", desc: "Is the overall market in a bull, sideways, or bear phase? The model scores setups differently in each." },
+          ].map(({ icon, label, desc }) => (
+            <div key={label} className="flex items-start gap-3">
+              <span className="text-lg shrink-0 mt-0.5">{icon}</span>
+              <div>
+                <p className="text-[14px] font-medium text-[#dde3ec]">{label}</p>
+                <p className="text-[12px] text-[#bacbbd]/60 mt-0.5 leading-relaxed">{desc}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <div className="border-t border-[#3c4a40]/20" />
+
+      {/* Ranking */}
+      <section>
+        <h3 className="text-[12px] font-bold uppercase tracking-widest text-[#bacbbd]/50 mb-3">
+          What does the ranking mean?
+        </h3>
+        <p className="text-[14px] leading-relaxed text-[#bacbbd]/80 mb-3">
+          The <span className="text-[#adc6ff] font-bold">#N</span> rank compares this stock against every other S&P 500 stock <span className="text-[#dde3ec] font-medium">scored today</span>. A rank of <span className="text-[#adc6ff] font-bold">#1</span> means the model sees this as the single best setup in the entire S&P 500 right now.
+        </p>
+        <div className="space-y-2">
+          {[
+            { range: "#1–#10", color: "text-[#45dfa4]", bg: "bg-[#45dfa4]/10", desc: "Elite tier — top 2–3% of the entire market. Very rare." },
+            { range: "#11–#50", color: "text-[#adc6ff]", bg: "bg-[#adc6ff]/10", desc: "Strong setup — top 10%. Worth watching closely." },
+            { range: "#51–#100", color: "text-[#f9bd22]", bg: "bg-[#f9bd22]/10", desc: "Above average — top 25%. Decent signal, not exceptional." },
+            { range: "#100+", color: "text-[#bacbbd]", bg: "bg-[#bacbbd]/10", desc: "Average or below. The model doesn't see a strong edge here today." },
+          ].map(({ range, color, bg, desc }) => (
+            <div key={range} className={`rounded-lg p-3 ${bg}`}>
+              <p className={`text-[13px] font-bold ${color} mb-0.5`}>{range}</p>
+              <p className="text-[12px] text-[#bacbbd]/70 leading-relaxed">{desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <div className="border-t border-[#3c4a40]/20" />
+
+      {/* How it was trained */}
+      <section>
+        <h3 className="text-[12px] font-bold uppercase tracking-widest text-[#bacbbd]/50 mb-3">
+          How was it trained?
+        </h3>
+        <p className="text-[14px] leading-relaxed text-[#bacbbd]/80 mb-2">
+          The model studied <span className="text-[#dde3ec] font-medium">4 years of daily price data</span> across ~390 S&P 500 stocks — over 370,000 stock-day examples. For each day, it learned whether that stock outperformed the S&P 500 by at least 2% over the following 5 days.
+        </p>
+        <p className="text-[14px] leading-relaxed text-[#bacbbd]/80">
+          It was tested using <span className="text-[#dde3ec] font-medium">walk-forward validation</span> — meaning it was only ever allowed to learn from the past and predict the future, never the other way around. The top 20% of its picks historically beat the bottom 20% by <span className="text-[#45dfa4] font-bold">+0.35% per 5-day hold</span>.
+        </p>
+      </section>
+
+      {/* Disclaimer */}
+      <div className="rounded-lg bg-orange-900/10 border border-orange-800/20 p-3">
+        <p className="text-[12px] text-orange-300/80 leading-relaxed">
+          ⚠ The ML score is a ranking tool, not a guarantee. Always confirm with the conviction score and your own judgement before trading. Past patterns don&apos;t guarantee future results.
+        </p>
+      </div>
+
+      <div className="pb-safe" />
+    </div>
+  );
+}
+
+export default function FAQModal({ open, onClose, mode = "conviction", mlScore, mlRank }: FAQModalProps) {
   // Close on Escape key
   useEffect(() => {
     if (!open) return;
@@ -46,7 +164,9 @@ export default function FAQModal({ open, onClose }: FAQModalProps) {
       >
         {/* Header */}
         <div className="sticky top-0 bg-[#0e141a] flex items-center justify-between px-5 py-4 border-b border-[#3c4a40]/20 z-10">
-          <p className="text-[16px] md:text-[18px] font-bold text-[#dde3ec] font-['Space_Grotesk']">How SwingAI Scores Signals</p>
+          <p className="text-[16px] md:text-[18px] font-bold text-[#dde3ec] font-['Space_Grotesk']">
+            {mode === "ml" ? "Understanding Your ML Score" : "How SwingAI Scores Signals"}
+          </p>
           <button
             onClick={onClose}
             className="w-7 h-7 rounded-full bg-[#252b31] flex items-center justify-center hover:bg-[#2f353c] transition-colors"
@@ -55,8 +175,9 @@ export default function FAQModal({ open, onClose }: FAQModalProps) {
           </button>
         </div>
 
-        {/* Content — extra right padding on mobile to prevent bleed */}
+        {/* Content */}
         <div className="pl-5 pr-7 py-5 md:px-5 space-y-6 text-[#bacbbd]">
+        {mode === "ml" ? <MlScoreContent mlScore={mlScore} mlRank={mlRank} /> : <>
 
           {/* Conviction Score */}
           <section>
@@ -171,6 +292,7 @@ export default function FAQModal({ open, onClose }: FAQModalProps) {
           </section>
 
           <div className="pb-safe" />
+        </>}
         </div>
       </div>
     </>

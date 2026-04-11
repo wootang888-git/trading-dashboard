@@ -15,6 +15,8 @@ export interface QuoteData {
   low52w: number;
   marketCap: number | null;
   earningsTimestamp: Date | null;
+  prevClose: number;
+  open: number;
 }
 
 export interface NewsItem {
@@ -67,6 +69,8 @@ export async function getQuote(ticker: string): Promise<QuoteData | null> {
       low52w: quote.fiftyTwoWeekLow ?? 0,
       marketCap: quote.marketCap ?? null,
       earningsTimestamp: quote.earningsTimestamp ?? null,
+      prevClose: quote.regularMarketPreviousClose ?? 0,
+      open: quote.regularMarketOpen ?? 0,
     };
   } catch {
     return null;
