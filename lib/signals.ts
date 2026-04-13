@@ -7,9 +7,8 @@ export interface Indicators {
   ema8: number;
   ema20: number;
   // Sprint 1: EMA Fan
-  ema10: number;
   ema50: number;
-  emaFanOpen: boolean;     // ema10 > ema20 > ema50 (multi-timeframe alignment)
+  emaFanOpen: boolean;     // ema8 > ema20 > ema50 (multi-timeframe alignment)
   emaGapWidening: boolean; // fan expanding = momentum accelerating
   volumeRatio: number;
   // Sprint 1: Volume Price Analysis
@@ -29,7 +28,15 @@ export interface Indicators {
   rsVsSpy: number | null;  // (stock 20-bar return) - (SPY 20-bar return), null if no SPY data
   rsRising: boolean;       // RS ratio higher now than 10 bars ago
   rsMakingNewHigh: boolean; // RS ratio at 20-bar high
+  rs6MonthQuartile: boolean; // RS vs SPY in top 25% of 6-month range
   atr14: number;
+  // Breakout Tightening
+  obv20High: boolean;      // On-Balance Volume making 20-day high
+  high50d: number;         // 50-day consolidation high
+  bbSqueeze: boolean;      // BB Width < 20-day average width
+  macdAccelerating: boolean; // MACD Hist higher than previous bar
+  macdAccel2d: boolean;     // MACD Hist higher for 2 consecutive bars (stronger confirmation)
+  rsiCross62: boolean;      // RSI crossed above 62 from below this bar (fresh power-zone entry)
   macd: number;
   macdSignal: number;
   macdHist: number;
@@ -127,6 +134,17 @@ function calcATR(bars: HistoricalBar[], period = 14): number {
   return trs.slice(-period).reduce((s, v) => s + v, 0) / period;
 }
 
+/** OBV (On-Balance Volume) helper */
+function calcOBV(bars: HistoricalBar[]): number[] {
+  const obv = [0];
+  for (let i = 1; i < bars.length; i++) {
+    const diff = bars[i].close - bars[i - 1].close;
+    const val = diff > 0 ? bars[i].volume : diff < 0 ? -bars[i].volume : 0;
+    obv.push(obv[i - 1] + val);
+  }
+  return obv;
+}
+
 /** MACD — returns { macd, signal, hist } using standard 12/26/9 settings */
 function calcMACD(bars: HistoricalBar[]): { macd: number; signal: number; hist: number } {
   if (bars.length < 26) return { macd: 0, signal: 0, hist: 0 };
@@ -142,8 +160,7 @@ function calcMACD(bars: HistoricalBar[]): { macd: number; signal: number; hist: 
   const macd = macdSeries[macdSeries.length - 1];
   return { macd, signal, hist: macd - signal };
 }
-
-/** Bollinger Bands — 20-period SMA ± 2 std dev */
+/** Bollinger Bands — 20-period SMA ± 2 std dev (AC-009) */
 function calcBollingerBands(bars: HistoricalBar[], period = 20): {
   upper: number; lower: number; width: number; pct: number;
 } {
@@ -197,7 +214,7 @@ function calcRelativeStrength(bars: HistoricalBar[], spyBars: HistoricalBar[]): 
   if (bars.length < 21 || spyBars.length < 21) {
     return { rsVsSpy: 0, rsRising: false, rsMakingNewHigh: false };
   }
-  // Build a daily RS ratio series (stock/SPY) aligned by index from the tail
+  // AC-003: Check ticker identity via string comparison, not reference
   const len = Math.min(bars.length, spyBars.length, 21);
   const stockSlice = bars.slice(-len);
   const spySlice = spyBars.slice(-len);
@@ -224,13 +241,16 @@ export function computeIndicators(
 ): Indicators {
   const zero: Indicators = {
     rsi14: 50, ma20: 0, ma50: 0, ema8: 0, ema20: 0,
-    ema10: 0, ema50: 0, emaFanOpen: false, emaGapWidening: false,
+    ema50: 0, emaFanOpen: false, emaGapWidening: false,
     volumeRatio: 1, upDayVolRatio: 1, priceVs52wHigh: 0,
     isAboveMa20: false, isAboveMa50: false, isNear52wHigh: false,
     rsiInBullZone: false,
     isHigherHighs: false, isHigherLows: false, trendStructureIntact: false, recentSwingLow: null,
     rsVsSpy: null, rsRising: false, rsMakingNewHigh: false,
+    rs6MonthQuartile: false,
     atr14: 0, macd: 0, macdSignal: 0, macdHist: 0,
+    obv20High: false, high50d: 0, bbSqueeze: false, macdAccelerating: false,
+    macdAccel2d: false, rsiCross62: false,
     bbUpper: 0, bbLower: 0, bbWidth: 0, bbPct: 0.5,
   };
   if (bars.length === 0) return zero;
@@ -248,17 +268,40 @@ export function computeIndicators(
   const { macd, signal: macdSignal, hist: macdHist } = calcMACD(bars);
   const { upper: bbUpper, lower: bbLower, width: bbWidth, pct: bbPct } = calcBollingerBands(bars);
 
-  // Sprint 1A: EMA Fan (10/20/50 alignment + gap widening)
-  const ema10 = calcEMA(bars, 10);
+  // Convergence Logic: OBV 20-day High (Accumulation Check)
+  const obvSeries = calcOBV(bars);
+  const currentObv = obvSeries[obvSeries.length - 1];
+  const recentObv = obvSeries.slice(-20);
+  const obv20High = currentObv >= Math.max(...recentObv);
+
+  // Convergence Logic: 50-day Consolidation Range
+  const high50d = Math.max(...bars.slice(-50).map(b => b.high));
+
+  // Convergence Logic: BB Squeeze (Volatility Contraction Pattern)
+  const bbWidths = bars.slice(-20).map((_, i) => calcBollingerBands(bars.slice(0, bars.length - i)).width);
+  const avgBbWidth = bbWidths.reduce((a, b) => a + b, 0) / bbWidths.length;
+  const bbSqueeze = bbWidth < avgBbWidth;
+
+  // Precision: MACD Acceleration (Impulse detection)
+  const prevMacd = bars.length >= 2 ? calcMACD(bars.slice(0, -1)) : { hist: 0 };
+  const macdAccelerating = macdHist > prevMacd.hist;
+  const prevPrevMacd = bars.length >= 3 ? calcMACD(bars.slice(0, -2)) : { hist: 0 };
+  const macdAccel2d = macdHist > prevMacd.hist && prevMacd.hist > prevPrevMacd.hist;
+
+  // Precision: RSI cross above 62 from below (fresh power-zone entry)
+  const prevRsi = bars.length >= 2 ? calcRSI(bars.slice(0, -1)) : rsi14;
+  const rsiCross62 = rsi14 >= 62 && prevRsi < 62;
+
+  // Sprint 1A: EMA Fan (8/20/50 alignment + gap widening)
   const ema50 = calcEMA(bars, 50);
-  const emaFanOpen = ema10 > ema20 && ema20 > ema50 && ema50 > 0;
-  // Gap widening: compare current (ema10-ema50) spread vs 5 bars ago
+  const emaFanOpen = ema8 > ema20 && ema20 > ema50 && ema50 > 0;
+  // Gap widening: compare current (ema8-ema50) spread vs 5 bars ago
   let emaGapWidening = false;
   if (bars.length >= 6 && emaFanOpen) {
     const prevBars = bars.slice(0, -5);
-    const prevEma10 = calcEMA(prevBars, 10);
+    const prevEma8 = calcEMA(prevBars, 8);
     const prevEma50 = calcEMA(prevBars, 50);
-    emaGapWidening = (ema10 - ema50) > (prevEma10 - prevEma50);
+    emaGapWidening = (ema8 - ema50) > (prevEma8 - prevEma50);
   }
 
   // Sprint 1B: Volume Price Analysis — up-day vs down-day volume (last 20 bars)
@@ -287,9 +330,25 @@ export function computeIndicators(
     ? calcRelativeStrength(bars, spyBars)
     : { rsVsSpy: null as number | null, rsRising: false, rsMakingNewHigh: false };
 
+  // RS top-quartile: is current RS ratio in top 25% of its available range?
+  // (90-bar approximation — true 6-month would need ~126 bars)
+  let rs6MonthQuartile = false;
+  if (!isSpy && spyBars.length >= 21 && bars.length >= 20) {
+    const minLen = Math.min(bars.length, spyBars.length);
+    const rsRatios = bars.slice(-minLen).map((b, i) => {
+      const spy = spyBars[spyBars.length - minLen + i];
+      return spy && spy.close > 0 ? b.close / spy.close : 0;
+    }).filter(r => r > 0);
+    if (rsRatios.length >= 10) {
+      const sorted = [...rsRatios].sort((a, b) => a - b);
+      const p75 = sorted[Math.floor(sorted.length * 0.75)];
+      rs6MonthQuartile = (rsRatios[rsRatios.length - 1] ?? 0) >= p75;
+    }
+  }
+
   return {
     rsi14, ma20, ma50, ema8, ema20,
-    ema10, ema50, emaFanOpen, emaGapWidening,
+    ema50, emaFanOpen, emaGapWidening,
     volumeRatio, upDayVolRatio, priceVs52wHigh,
     isAboveMa20: latest.close > ma20,
     isAboveMa50: latest.close > ma50,
@@ -299,6 +358,8 @@ export function computeIndicators(
     rsVsSpy: rsResult.rsVsSpy,
     rsRising: rsResult.rsRising,
     rsMakingNewHigh: rsResult.rsMakingNewHigh,
+    rs6MonthQuartile,
+    obv20High, high50d, bbSqueeze, macdAccelerating, macdAccel2d, rsiCross62,
     atr14, macd, macdSignal, macdHist,
     bbUpper, bbLower, bbWidth, bbPct,
   };
@@ -312,19 +373,43 @@ export function scoreMomentumBreakout(
 ): { score: number; entryNote: string; stopNote: string; entryPrice: number; stopPrice: number; conditions: Condition[] } {
   let score = 0;
 
-  const rsiHealthy = ind.rsi14 >= 50 && ind.rsi14 <= 75;
-  const rsiExtended = ind.rsi14 > 75;
-  if (rsiHealthy) score += 2;
-  else if (rsiExtended) score += 1;
+  const latest = bars[bars.length - 1];
 
+  // 1. Structure: Breakout confirmation (Close > 50-day high)
+  const breakoutConfirmed = latest.close >= ind.high50d;
+  if (breakoutConfirmed) score += 3;
   if (ind.isAboveMa20) score += 2;
   if (ind.isAboveMa50) score += 1;
   if (ind.isNear52wHigh) score += 2;
 
+  // 2. Volume confirmation (soft penalty below 1.5x — mandatory per Convergence spec)
   const volumeSurge = ind.volumeRatio >= 1.5;
   const volumeOk = ind.volumeRatio >= 1.2;
   if (volumeSurge) score += 2;
   else if (volumeOk) score += 1;
+  if (ind.volumeRatio < 1.5) score -= 2; // Penalty: below Convergence threshold
+  if (ind.obv20High) score += 2; // Accumulation check
+
+  // 3. Volatility Contraction (VCP) — meaningful precondition, not just a bonus
+  if (ind.bbSqueeze) score += 2;
+
+  // 4. Precision Timing: RSI cross into power zone (fresh entry > broad range)
+  const rsiCross62 = ind.rsiCross62;
+  const rsiPowerZone = ind.rsi14 >= 62;
+  if (rsiCross62) score += 3;        // Fresh cross — highest conviction timing
+  else if (rsiPowerZone) score += 1; // Already in zone — partial credit
+
+  // MACD 2-day acceleration (2-bar confirmation > 1-bar)
+  const macdBullish = ind.macdHist > 0;
+  if (macdBullish) score += 1;
+  if (ind.macdAccel2d) score += 2;
+  else if (ind.macdAccelerating) score += 1;
+
+  // 5. Contextual Alignment
+  if (ind.emaFanOpen) score += 1;
+  const accumulating = ind.upDayVolRatio >= 1.2;
+  if (accumulating) score += 1;
+  if (ind.trendStructureIntact) score += 1;
 
   let recentUptrend = false;
   if (bars.length >= 5) {
@@ -333,50 +418,53 @@ export function scoreMomentumBreakout(
     if (recentUptrend) score += 1;
   }
 
-  const macdBullish = ind.macdHist > 0;
-  if (macdBullish) score += 1;
+  // 6. Relative Strength — top quartile > merely rising
+  if (ind.rs6MonthQuartile) score += 2;
+  else if (ind.rsRising) score += 1;
 
-  // Sprint 1: EMA fan open = extra confirmation of trend health
-  if (ind.emaFanOpen) score += 1;
-  // Sprint 1: Institutional accumulation signal
-  const accumulating = ind.upDayVolRatio >= 1.2;
-  if (accumulating) score += 1;
-  // Sprint 2: Trend structure and RS bonus
-  if (ind.trendStructureIntact) score += 1;
-  if (ind.rsRising) score += 1;
+  // AC-010: ATR Guard
+  if (ind.atr14 < 0.05) return { score: 0, entryPrice: 0, stopPrice: 0, entryNote: "ATR too low", stopNote: "ATR too low", conditions: [] };
 
-  const latest = bars[bars.length - 1];
-  const entryPrice = latest.high + 0.05;
+  // Convergence Entry: $0.05 above the 50d Resistance High (Structural Pivot)
+  const entryPrice = ind.high50d + 0.05;
+
   // Technical stop: below recent swing low − 0.5× ATR buffer; fallback to 1.5× ATR from entry
   const swingStop = ind.recentSwingLow !== null && ind.atr14 > 0
     ? ind.recentSwingLow - 0.5 * ind.atr14
     : null;
-  const atrStop = entryPrice - 1.5 * ind.atr14;
+  const minBuffer = 0.10; // AC-011
+  const atrStop = Math.min(entryPrice - 1.5 * ind.atr14, entryPrice - minBuffer);
   const stopPrice = swingStop !== null ? Math.max(swingStop, atrStop - ind.atr14) : atrStop;
   const stopLabel = swingStop !== null
     ? `Stop $${stopPrice.toFixed(2)} (below swing low $${ind.recentSwingLow!.toFixed(2)} − 0.5× ATR)`
-    : `Stop $${stopPrice.toFixed(2)} (1.5× ATR below entry — ATR $${ind.atr14.toFixed(2)})`;
+    : `Stop $${stopPrice.toFixed(2)} (1.5× ATR below entry)`; // AC-001: Remove numeric ATR value
 
   return {
     score: Math.min(score, 10),
     entryPrice,
     stopPrice,
-    entryNote: `Buy stop $0.05 above $${latest.high.toFixed(2)} (today's high / resistance)`,
+    entryNote: `Buy stop $0.05 above $${ind.high50d.toFixed(2)} (50-day structural resistance)`,
     stopNote: stopLabel,
     conditions: [
-      { label: "RSI 50–75", met: rsiHealthy || rsiExtended },
+      { label: "50d Breakout", met: breakoutConfirmed },
+      { label: "RSI cross 62", met: rsiCross62 },
+      { label: "RSI Power Zone (62+)", met: rsiPowerZone },
       { label: "RSI bull zone", met: ind.rsiInBullZone },
+      { label: "BB Squeeze (VCP)", met: ind.bbSqueeze },
+      { label: "OBV 20d High", met: ind.obv20High },
+      { label: "Volume surge 1.5x", met: volumeSurge },
       { label: "Above MA20", met: ind.isAboveMa20 },
       { label: "Above MA50", met: ind.isAboveMa50 },
       { label: "EMA fan open", met: ind.emaFanOpen },
       { label: "Higher highs", met: ind.isHigherHighs },
       { label: "Higher lows", met: ind.isHigherLows },
       { label: "Near 52w high", met: ind.isNear52wHigh },
-      { label: "Volume surge", met: volumeSurge || volumeOk },
       { label: "Accumulation", met: accumulating },
+      { label: "RS top quartile", met: ind.rs6MonthQuartile },
       { label: "RS vs SPY ↑", met: ind.rsRising },
       { label: "Recent uptrend", met: recentUptrend },
       { label: "MACD bullish", met: macdBullish },
+      { label: "MACD accel 2d", met: ind.macdAccel2d },
     ],
   };
 }
@@ -433,15 +521,19 @@ export function scoreEMAPullback(
   // Sprint 2: RS rising = this stock leads even during pullback
   if (ind.rsRising) score += 1;
 
+  // AC-004: Downside Gate (suppress in bearish regime)
+  if (!ind.isAboveMa50) score -= 2; 
+
   const entryPrice = latest.high + 0.05;
-  // Technical stop: lower of (8 EMA × 0.985) or (swing low − 0.3× ATR); fallback to ema8 * 0.99
+  const minBuffer = 0.10; // AC-011
   const emaStop = ind.ema8 > 0 ? ind.ema8 * 0.985 : null;
   const swingStop = ind.recentSwingLow !== null && ind.atr14 > 0
     ? ind.recentSwingLow - 0.3 * ind.atr14
     : null;
-  const stopPrice = emaStop !== null && swingStop !== null
-    ? Math.min(emaStop, swingStop)
-    : emaStop ?? swingStop ?? (ind.ema8 > 0 ? ind.ema8 * 0.99 : latest.low);
+  const stopPrice = Math.min(
+    emaStop !== null && swingStop !== null ? Math.min(emaStop, swingStop) : emaStop ?? swingStop ?? (ind.ema8 > 0 ? ind.ema8 * 0.99 : latest.low),
+    entryPrice - minBuffer
+  );
   const stopLabel = emaStop !== null && swingStop !== null
     ? `Stop $${stopPrice.toFixed(2)} (lower of 8 EMA ×0.985 $${emaStop.toFixed(2)} or swing low $${ind.recentSwingLow!.toFixed(2)} − 0.3× ATR)`
     : emaStop !== null
@@ -517,14 +609,19 @@ export function scoreMeanReversion(
   // Sprint 2: HH/HL — for mean reversion we want MA50 trend intact (isHigherLows on longer frame)
   if (ind.isHigherLows) score += 1;
 
+  // AC-006: Death Cross Gate (prevent entry into severe downtrends)
+  if (ind.ma20 < ind.ma50) score -= 3; 
+
   const entryPrice = latest.high + 0.05;
+  const minBuffer = 0.10; // AC-011
   // Technical stop: recent swing low − 1× ATR (wider buffer for volatile mean-reversion names)
-  const stopPrice = ind.recentSwingLow !== null && ind.atr14 > 0
-    ? ind.recentSwingLow - 1.0 * ind.atr14
-    : (ind.atr14 > 0 ? latest.low - ind.atr14 : latest.low - 0.10);
+  const stopPrice = Math.min(
+    ind.recentSwingLow !== null && ind.atr14 > 0 ? ind.recentSwingLow - 1.0 * ind.atr14 : (ind.atr14 > 0 ? latest.low - ind.atr14 : latest.low - 0.10),
+    entryPrice - minBuffer
+  );
   const stopLabel = ind.recentSwingLow !== null
-    ? `Stop $${stopPrice.toFixed(2)} (swing low $${ind.recentSwingLow.toFixed(2)} − 1× ATR $${ind.atr14.toFixed(2)})`
-    : `Stop $${stopPrice.toFixed(2)} (1× ATR below candle low — ATR $${ind.atr14.toFixed(2)})`;
+    ? `Stop $${stopPrice.toFixed(2)} (swing low $${ind.recentSwingLow.toFixed(2)} − 1.0× ATR)`
+    : `Stop $${stopPrice.toFixed(2)} (1.0× ATR below candle low)`; // AC-001: Descriptive labels only
 
   return {
     score: Math.min(score, 10),
@@ -659,7 +756,7 @@ export function validateSignal(
   }
 
   // EMA fan claimed but EMAs aren't aligned
-  if (ind.emaFanOpen && !(ind.ema10 > ind.ema20 && ind.ema20 > ind.ema50)) {
+  if (ind.emaFanOpen && !(ind.ema8 > ind.ema20 && ind.ema20 > ind.ema50)) {
     conflictPenalty = Math.min(conflictPenalty - 5, -15);
     notes.push("✗ EMA fan mismatch — fan conditions not fully confirmed");
   }

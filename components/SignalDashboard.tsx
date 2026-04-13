@@ -157,7 +157,8 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
           .filter((t) => {
             const live = prices[t.ticker]?.price;
             if (!live || !t.stop_price) return false;
-            return ((live - t.stop_price) / t.entry_price) * 100 < 5;
+            const riskDist = t.entry_price - t.stop_price;
+            return riskDist > 0 && ((live - t.stop_price) / riskDist) * 100 < 5;
           })
           .map((t) => t.ticker);
 
@@ -205,15 +206,15 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
       const tradeTickers = [...new Set(openTrades.map((t) => t.ticker))].join(",");
       const priceRes = await fetch(`/api/current-prices?tickers=${tradeTickers}`);
       if (!priceRes.ok) return;
-      const prices: Record<string, number | null> = await priceRes.json();
+      const prices: Record<string, { price: number; prevClose: number; open: number } | null> = await priceRes.json();
 
       for (const trade of openTrades) {
-        const live = prices[trade.ticker];
+        const live = prices[trade.ticker]?.price;
         if (!live) continue;
 
         // Alert 2: price within 5% of stop loss
         if (trade.stop_price && !alertedStopRef.current.has(trade.ticker)) {
-          const bufferPct = ((live - trade.stop_price) / trade.entry_price) * 100;
+          const bufferPct = ((live - trade.stop_price) / (trade.entry_price - trade.stop_price)) * 100;
           if (bufferPct < 5) {
             notify(
               `⚠ ${trade.ticker} approaching stop loss`,
@@ -224,7 +225,7 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
         }
         // Clear stop alert if price recovers above 8% buffer (reset so it can alert again if needed)
         if (trade.stop_price && alertedStopRef.current.has(trade.ticker)) {
-          const bufferPct = ((live - trade.stop_price) / trade.entry_price) * 100;
+          const bufferPct = ((live - trade.stop_price) / (trade.entry_price - trade.stop_price)) * 100;
           if (bufferPct >= 8) alertedStopRef.current.delete(trade.ticker);
         }
       }
@@ -234,7 +235,7 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
         if (signal.convictionScore < TRADE_THRESHOLD || !signal.entryPrice) continue;
         const alertKey = `${signal.ticker}-${signal.entryPrice}`;
         if (alertedEntryRef.current.has(alertKey)) continue;
-        const live = prices[signal.ticker];
+        const live = prices[signal.ticker]?.price;
         if (live && live >= signal.entryPrice) {
           notify(
             `🟢 ${signal.ticker} entry trigger hit`,

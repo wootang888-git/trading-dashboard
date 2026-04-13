@@ -13,17 +13,24 @@ create table if not exists trades (
   exit_date date,
   strategy text default 'momentum',
   notes text,
+  user_id uuid references auth.users,   -- nullable: NULL = test data, non-null = owned row
   created_at timestamptz default now()
 );
 
--- If the table already exists, add stop_price if missing:
--- alter table trades add column if not exists stop_price numeric;
+-- Indexes for multi-user performance
+create index if not exists idx_trades_user_id on trades(user_id);
 
--- Enable Row Level Security (makes it safe to use the public anon key)
+-- Enable Row Level Security
 alter table trades enable row level security;
 
--- Allow all operations for now (single-user app)
-create policy "Allow all" on trades for all using (true) with check (true);
+-- Testing-safe policy: ownerless rows (user_id IS NULL) visible to anon;
+-- once auth is active, rows are scoped to the owning user.
+-- ⚠️  DO NOT replace this with "TO authenticated" only — that silently
+--     empties the journal when the app uses the anon key without a session.
+create policy "Users can manage their own trades"
+on trades for all to authenticated, anon
+using  ((user_id is null) or (auth.uid() = user_id))
+with check ((user_id is null) or (auth.uid() = user_id));
 
 -- Dynamic watchlist (up to 100 tickers)
 create table if not exists watchlist (
@@ -31,10 +38,14 @@ create table if not exists watchlist (
   ticker text not null unique,
   name text not null,
   strategy text not null default 'momentum',
+  user_id uuid references auth.users,   -- nullable: reserved for future multi-user scoping
   created_at timestamptz default now()
 );
 
+create index if not exists idx_watchlist_user_id on watchlist(user_id);
+
 alter table watchlist enable row level security;
+-- Intentionally wide-open for now (single-user, no sensitive data in watchlist)
 create policy "Allow all" on watchlist for all using (true) with check (true);
 
 -- Seed with default 20 tickers

@@ -10,6 +10,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 // --- Watchlist ---
 
 export interface WatchlistItem {
+  user_id?: string;
   id?: string;
   ticker: string;
   name: string;
@@ -59,6 +60,7 @@ export async function removeFromWatchlist(ticker: string): Promise<boolean> {
 }
 
 export interface Trade {
+  user_id?: string;
   id?: string;
   ticker: string;
   entry_price: number;
@@ -82,7 +84,13 @@ export async function getTrades(): Promise<Trade[]> {
 }
 
 export async function addTrade(trade: Omit<Trade, "id" | "created_at">): Promise<boolean> {
-  const { error } = await supabase.from("trades").insert(trade);
+  // In a multi-user app, we get the UID from the session
+  const { data: { session } } = await supabase.auth.getSession();
+  
+  const { error } = await supabase.from("trades").insert({
+    ...trade,
+    user_id: session?.user?.id // Will be null if not logged in
+  });
   return !error;
 }
 
