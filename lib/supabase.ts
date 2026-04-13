@@ -216,13 +216,23 @@ function _today(): string {
   return new Date().toISOString().split("T")[0];
 }
 
+async function _latestScoreDate(): Promise<string> {
+  const { data } = await supabase
+    .from("ml_scores")
+    .select("score_date")
+    .order("score_date", { ascending: false })
+    .limit(1)
+    .single();
+  return data?.score_date ?? _today();
+}
+
 /** ML scores for specific watchlist tickers — used for the badge on SignalCard. */
 export async function getMlScores(
   tickers: string[],
   scoreDate?: string
 ): Promise<Record<string, MlScore>> {
   if (tickers.length === 0) return {};
-  const d = scoreDate ?? _today();
+  const d = scoreDate ?? await _latestScoreDate();
   const { data } = await supabase
     .from("ml_scores")
     .select("ticker, ml_score, ml_rank, ml_score_pct")
@@ -237,7 +247,7 @@ export async function getMlDiscoveries(
   limit = 10,
   scoreDate?: string
 ): Promise<MlScore[]> {
-  const d = scoreDate ?? _today();
+  const d = scoreDate ?? await _latestScoreDate();
   let query = supabase
     .from("ml_scores")
     .select("ticker, ml_score, ml_rank, ml_score_pct, feature_snapshot, fwd_pe, market_cap_b")
