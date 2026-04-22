@@ -16,6 +16,11 @@ interface SAInfo {
   newsSentiment: "positive" | "negative" | "neutral" | null;
   newsUrl: string | null;
   newsPublisher: string | null;
+  finnhubLabel: "bullish" | "bearish" | "neutral" | null;
+  finnhubBullishPct: number | null;
+  finnhubAnalystCount: number | null;
+  analystTargetMean: number | null;
+  analystUpside: number | null;
 }
 
 interface ValidationResult {
@@ -50,9 +55,10 @@ interface SignalCardProps {
   strategy: string;
   conditions?: { label: string; met: boolean }[];
   sa?: SAInfo;
-  onOpenCalc?: (entry: number | null, stop: number | null) => void;
+  onOpenCalc?: (entry: number | null, stop: number | null, ticker?: string, garchVol?: number | null) => void;
   mlScore?: number | null;
   mlRank?: number | null;
+  garchVol?: number | null;
   prevClose?: number | null;
   open?: number | null;
 }
@@ -105,7 +111,7 @@ export default function SignalCard({
   atr14, macdHist, bbPct,
   entryNote, stopNote, entryPrice, stopPrice,
   strategy, conditions, sa, onOpenCalc,
-  mlScore, mlRank,
+  mlScore, mlRank, garchVol,
   prevClose, open,
 }: SignalCardProps) {
   const [modalOpen, setModalOpen] = useState(false);
@@ -464,6 +470,33 @@ export default function SignalCard({
               </div>
             )}
 
+            {/* Finnhub sentiment + analyst target */}
+            {sa?.finnhubLabel && (
+              <div className="flex items-center gap-3 px-1 mb-3 flex-wrap">
+                <span className={`text-[11px] font-medium ${
+                  sa.finnhubLabel === "bullish" ? "text-[#43ed9e]"
+                  : sa.finnhubLabel === "bearish" ? "text-[#ffb3ae]"
+                  : "text-[#bacbbd]"
+                }`}>
+                  Analyst {sa.finnhubLabel.charAt(0).toUpperCase() + sa.finnhubLabel.slice(1)}
+                  {sa.finnhubBullishPct !== null && ` ${sa.finnhubBullishPct}%`}
+                  {sa.finnhubAnalystCount !== null && (
+                    <span className="text-[#bacbbd]/50 font-normal"> · {sa.finnhubAnalystCount} analysts</span>
+                  )}
+                </span>
+                {sa.analystTargetMean !== null && (
+                  <span className="text-[11px] text-[#bacbbd]">
+                    Target ${sa.analystTargetMean.toFixed(2)}
+                    {sa.analystUpside !== null && (
+                      <span className={sa.analystUpside >= 0 ? "text-[#43ed9e]" : "text-[#ffb3ae]"}>
+                        {" "}({sa.analystUpside >= 0 ? "+" : ""}{sa.analystUpside}%)
+                      </span>
+                    )}
+                  </span>
+                )}
+              </div>
+            )}
+
             {/* Action row: chart + calculator + log trade */}
             <div className="flex items-center gap-2">
               <button
@@ -475,7 +508,7 @@ export default function SignalCard({
               </button>
               {entryPrice && stopPrice && (
                 <button
-                  onClick={() => onOpenCalc?.(entryPrice, stopPrice)}
+                  onClick={() => onOpenCalc?.(entryPrice, stopPrice, ticker, garchVol)}
                   className="text-xs px-3 py-1 rounded-lg bg-[#252b31] text-[#bacbbd] hover:bg-[#2f353c] hover:text-[#dde3ec] transition-colors font-medium"
                 >
                   Size

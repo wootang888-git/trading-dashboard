@@ -3,6 +3,7 @@ import { getWatchlist, getMlScores, getMlDiscoveries, getMlPerformance } from "@
 import { getQuote, getHistorical, getNews, HistoricalBar } from "@/lib/yahoo";
 import { buildSignal } from "@/lib/signals";
 import { SECTOR_ETF } from "@/lib/watchlist";
+import { getFinnhubData } from "@/lib/finnhub";
 
 export const revalidate = 300;
 
@@ -25,10 +26,11 @@ async function getInitialData() {
 
   const results = await Promise.all(
     watchlist.map(async ({ ticker, strategy }) => {
-      const [quote, bars, news] = await Promise.all([
+      const [quote, bars, news, finnhub] = await Promise.all([
         getQuote(ticker),
         getHistorical(ticker, 90),
         getNews(ticker),
+        getFinnhubData(ticker),
       ]);
       if (!quote || bars.length === 0) return null;
       const sectorEtf = SECTOR_ETF[ticker];
@@ -63,6 +65,13 @@ async function getInitialData() {
           newsSentiment: news?.title ? sentiment(news.title) : null,
           newsUrl: news?.link ?? null,
           newsPublisher: news?.publisher ?? null,
+          finnhubLabel: finnhub.label,
+          finnhubBullishPct: finnhub.bullishPct,
+          finnhubAnalystCount: finnhub.analystCount,
+          analystTargetMean: finnhub.targetMean,
+          analystUpside: finnhub.targetMean
+            ? Math.round((finnhub.targetMean - quote.price) / quote.price * 100)
+            : null,
         },
       };
     })
@@ -85,6 +94,7 @@ async function getInitialData() {
     ...s,
     mlScore: mlScores[s.ticker]?.ml_score_pct ?? null,
     mlRank: mlScores[s.ticker]?.ml_rank ?? null,
+    garchVol: mlScores[s.ticker]?.garch_vol ?? null,
   }));
 
   return {

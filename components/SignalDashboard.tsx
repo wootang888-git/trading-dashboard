@@ -68,9 +68,15 @@ interface SignalData {
     newsSentiment: "positive" | "negative" | "neutral" | null;
     newsUrl: string | null;
     newsPublisher: string | null;
+    finnhubLabel: "bullish" | "bearish" | "neutral" | null;
+    finnhubBullishPct: number | null;
+    finnhubAnalystCount: number | null;
+    analystTargetMean: number | null;
+    analystUpside: number | null;
   };
   mlScore?: number | null;
   mlRank?: number | null;
+  garchVol?: number | null;
   prevClose?: number | null;
   open?: number | null;
 }
@@ -87,6 +93,8 @@ interface CalcState {
   open: boolean;
   entry: number | null;
   stop: number | null;
+  ticker?: string;
+  garchVol?: number | null;
 }
 
 /** Request browser notification permission once on mount. */
@@ -170,8 +178,8 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
     loadPositions();
   }, []);
 
-  const openCalc = useCallback((entry?: number | null, stop?: number | null) => {
-    setCalc({ open: true, entry: entry ?? null, stop: stop ?? null });
+  const openCalc = useCallback((entry?: number | null, stop?: number | null, ticker?: string, garchVol?: number | null) => {
+    setCalc({ open: true, entry: entry ?? null, stop: stop ?? null, ticker, garchVol });
   }, []);
 
   const closeCalc = useCallback(() => {
@@ -366,7 +374,7 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
           </h2>
           <div className="space-y-3">
             {trade.map((s) => (
-              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} />
+              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} />
             ))}
           </div>
         </section>
@@ -383,7 +391,7 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
           </p>
           <div className="space-y-3">
             {watch.map((s) => (
-              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} />
+              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} />
             ))}
           </div>
         </section>
@@ -397,7 +405,7 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
           </h2>
           <div className="space-y-3">
             {observe.map((s) => (
-              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} />
+              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} />
             ))}
           </div>
         </section>
@@ -434,6 +442,8 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
         <CalculatorModal
           entry={calc.entry}
           stop={calc.stop}
+          ticker={calc.ticker}
+          garchVol={calc.garchVol}
           onClose={closeCalc}
         />
       )}

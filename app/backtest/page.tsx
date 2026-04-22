@@ -39,8 +39,8 @@ type BacktestSummary = {
   avgLossPct: number;
   totalRisked: number;
   averageHoldDays: number;
-  topConvictionTickers: Array<{ ticker: string; pnl: number; pnlPct: number; winRate: number; resultsCount: number; avgHoldDays: number; convictionScore: number }>;
-  bestPerformers: Array<{ ticker: string; pnl: number; pnlPct: number; winRate: number; resultsCount: number; avgHoldDays: number; convictionScore: number }>;
+  topConvictionTickers: Array<{ ticker: string; strategy: string; convictionBand: "high" | "medium" | "low"; pnl: number; pnlPct: number; winRate: number; resultsCount: number; avgHoldDays: number; convictionScore: number }>;
+  bestPerformers: Array<{ ticker: string; strategy: string; convictionBand: "high" | "medium" | "low"; pnl: number; pnlPct: number; winRate: number; resultsCount: number; avgHoldDays: number; convictionScore: number }>;
   switchCountsPerTicker: Record<string, { tradeToWatch: number; watchToTrade: number; totalSwitches: number }>;
   switchDistribution: Array<{ switches: number; count: number }>;
 };
@@ -487,6 +487,8 @@ export default function BacktestPage() {
                 <thead>
                   <tr>
                     <th className="px-2 py-1 border border-[#2f4340]">Ticker</th>
+                    <th className="px-2 py-1 border border-[#2f4340]">Strategy</th>
+                    <th className="px-2 py-1 border border-[#2f4340]">Band</th>
                     <th className="px-2 py-1 border border-[#2f4340]">Conviction Score</th>
                     <th className="px-2 py-1 border border-[#2f4340]">PnL ($)</th>
                     <th className="px-2 py-1 border border-[#2f4340]">Avg % per trade</th>
@@ -498,6 +500,14 @@ export default function BacktestPage() {
                   {(activeSummary?.topConvictionTickers ?? []).slice(0, reportTopCount).map((item) => (
                     <tr key={item.ticker} className="hover:bg-[#162d2a]">
                       <td className="px-2 py-1 border border-[#2f4340]">{item.ticker}</td>
+                      <td className="px-2 py-1 border border-[#2f4340]">
+                        {item.strategy === "mean_reversion" ? "Mean Rev" : item.strategy === "momentum" ? "Momentum" : item.strategy === "ema_pullback" ? "EMA Pull" : item.strategy === "etf_rotation" ? "ETF Rot" : item.strategy}
+                      </td>
+                      <td className="px-2 py-1 border border-[#2f4340]">
+                        <span className={item.convictionBand === "high" ? "text-[#43ed9e]" : item.convictionBand === "medium" ? "text-yellow-400" : "text-slate-400"}>
+                          {item.convictionBand === "high" ? "Trade" : item.convictionBand === "medium" ? "Watch" : "Observe"}
+                        </span>
+                      </td>
                       <td className="px-2 py-1 border border-[#2f4340]">{item.convictionScore.toFixed(1)}</td>
                       <td className="px-2 py-1 border border-[#2f4340]">{item.pnl.toFixed(2)}</td>
                       <td className="px-2 py-1 border border-[#2f4340]">{item.pnlPct.toFixed(2)}%</td>
@@ -536,6 +546,7 @@ export default function BacktestPage() {
             </div>
 
             <div className="mt-2 text-xs text-slate-400">Each ticker is ranked by signal conviction and outcome performance; a higher conviction score means stronger trade agreement. Best performers are by % gain among executed trades.</div>
+            <div className="mt-1 text-xs text-slate-500"><span className="text-[#43ed9e]">Trade</span> ≥90 · <span className="text-yellow-400">Watch</span> ≥70 · <span className="text-slate-400">Observe</span> &lt;70 (monitor only, do not enter)</div>
           </div>
         </section>
       )}

@@ -6,10 +6,12 @@ import { AlertCircle, Minus, X } from "lucide-react";
 interface CalculatorModalProps {
   entry?: number | null;
   stop?: number | null;
+  ticker?: string;
+  garchVol?: number | null;  // 1-day forward vol in % pts (e.g. 1.8 = 1.8%); null = no ML score
   onClose: () => void;
 }
 
-export default function CalculatorModal({ entry: initialEntry, stop: initialStop, onClose }: CalculatorModalProps) {
+export default function CalculatorModal({ entry: initialEntry, stop: initialStop, ticker, garchVol, onClose }: CalculatorModalProps) {
   const [minimized, setMinimized] = useState(false);
   const [account, setAccount] = useState("10000");
   const [riskPct, setRiskPct] = useState("2");
@@ -34,6 +36,14 @@ export default function CalculatorModal({ entry: initialEntry, stop: initialStop
   const riskPerShare = valid ? entryNum - stopNum : null;
   const dollarRisk = valid ? accountNum * (riskPctNum / 100) : null;
   const shareCount = valid ? Math.floor(dollarRisk! / riskPerShare!) : null;
+
+  // GARCH-adjusted position size (inverse variance weighting)
+  // shares = (equity × risk%) / (entry × garchVol_decimal × 2)
+  const garchVolDecimal = garchVol != null ? garchVol / 100 : null;
+  const garchShareCount =
+    valid && garchVolDecimal != null && garchVolDecimal > 0 && entryNum > 0
+      ? Math.floor((accountNum * (riskPctNum / 100)) / (entryNum * garchVolDecimal * 2))
+      : null;
   const positionValue = valid ? shareCount! * entryNum : null;
   const portfolioPct = valid ? (positionValue! / accountNum) * 100 : null;
   const target = valid ? entryNum + 2 * riskPerShare! : null;
@@ -136,7 +146,7 @@ export default function CalculatorModal({ entry: initialEntry, stop: initialStop
           ) : (
             <div className="space-y-2">
               <div className="flex justify-between text-xs">
-                <span style={labelStyle}>Shares</span>
+                <span style={labelStyle}>Shares (stop-based)</span>
                 <span
                   className="font-bold text-sm"
                   style={{ color: "var(--on-surface)", fontFamily: "var(--font-space-grotesk, 'Space Grotesk', sans-serif)" }}
@@ -144,6 +154,21 @@ export default function CalculatorModal({ entry: initialEntry, stop: initialStop
                   {shareCount!.toLocaleString()}
                 </span>
               </div>
+              <div className="flex justify-between items-center text-xs">
+                <span style={labelStyle}>GARCH Size</span>
+                {garchShareCount != null ? (
+                  <span className="font-bold text-sm" style={{ color: "var(--on-surface)", fontFamily: "var(--font-space-grotesk, 'Space Grotesk', sans-serif)" }}>
+                    {garchShareCount.toLocaleString()}
+                  </span>
+                ) : (
+                  <span className="italic" style={{ color: "var(--outline)", fontSize: "11px" }}>No ML score</span>
+                )}
+              </div>
+              {garchVol != null && (
+                <p className="text-[10px]" style={{ color: "var(--outline)" }}>
+                  GARCH: {garchVol.toFixed(2)}% daily vol forecast
+                </p>
+              )}
               <div className="flex justify-between text-xs">
                 <span style={labelStyle}>Dollar risk</span>
                 <span style={{ color: "var(--on-surface)" }} className="font-mono">

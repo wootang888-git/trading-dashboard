@@ -209,6 +209,7 @@ export interface MlScore {
   feature_snapshot: Record<string, number> | null;
   fwd_pe: number | null;
   market_cap_b: number | null;
+  garch_vol: number | null;
 }
 
 export interface MlPerformanceRow {
@@ -243,7 +244,7 @@ export async function getMlScores(
   const d = scoreDate ?? await _latestScoreDate();
   const { data } = await supabase
     .from("ml_scores")
-    .select("ticker, ml_score, ml_rank, ml_score_pct")
+    .select("ticker, ml_score, ml_rank, ml_score_pct, garch_vol")
     .eq("score_date", d)
     .in("ticker", tickers);
   return Object.fromEntries((data ?? []).map((r) => [r.ticker, r as MlScore]));
@@ -258,7 +259,7 @@ export async function getMlDiscoveries(
   const d = scoreDate ?? await _latestScoreDate();
   let query = supabase
     .from("ml_scores")
-    .select("ticker, ml_score, ml_rank, ml_score_pct, feature_snapshot, fwd_pe, market_cap_b")
+    .select("ticker, ml_score, ml_rank, ml_score_pct, feature_snapshot, fwd_pe, market_cap_b, garch_vol")
     .eq("score_date", d)
     .order("ml_rank", { ascending: true })
     .limit(limit);

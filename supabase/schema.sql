@@ -125,6 +125,7 @@ create table if not exists ml_scores (
   feature_snapshot jsonb,                  -- {RSI_14: 67.2, High52w_Pct: -0.03, ...}
   fwd_pe          numeric(8,2),            -- forward P/E ratio (null if unavailable)
   market_cap_b    numeric(8,2),            -- market cap in $B
+  garch_vol       numeric(6,4),            -- 1-day forward volatility in % pts (GARCH 1,1)
   computed_at     timestamptz default now(),
   unique(ticker, score_date)
 );
@@ -146,6 +147,8 @@ create table if not exists ml_performance (
   return_5d       numeric(8,4),            -- actual 5-day return (e.g. 0.0312 = +3.12%)
   spy_return_5d   numeric(8,4),            -- SPY return same period
   beat_spy        boolean,                 -- return_5d > spy_return_5d
+  spy_regime      text,                    -- 'bull' | 'sideways' | 'bear' at check time
+  vix_close       numeric(6,2),            -- VIX closing value on check_date
   checked_at      timestamptz default now(),
   unique(ticker, score_date)
 );
@@ -155,3 +158,28 @@ create policy "public read ml_performance" on ml_performance for select using (t
 create policy "service write ml_performance" on ml_performance for all using (true);
 
 create index if not exists ml_performance_date_rank_idx on ml_performance (score_date desc, ml_rank asc);
+
+-- Daily model health summary: one row per scoring day
+-- Answers: regime performance, failure detection, overconfidence monitoring
+create table if not exists ml_health (
+  id                    uuid primary key default gen_random_uuid(),
+  score_date            date not null unique,
+  spy_regime            text not null,              -- 'bull' | 'sideways' | 'bear'
+  vix_close             numeric(6,2),               -- VIX on score_date
+  n_scored              int not null,               -- tickers scored today
+  mean_score            numeric(6,4),               -- mean ml_score across all scored tickers
+  pct_above_70          numeric(5,2),               -- % scoring >= 0.70 (overconfidence flag)
+  rolling_10d_n         int,                        -- # performance outcomes in last 10 trading days
+  rolling_10d_beat_spy  numeric(5,2),               -- % that beat SPY (null until 10 days of data)
+  rolling_10d_brier     numeric(6,4),               -- mean((ml_score - outcome)^2) — calibration
+  top_third_return      numeric(8,4),               -- mean return_5d for top-ranked third
+  bot_third_return      numeric(8,4),               -- mean return_5d for bottom-ranked third
+  calibration_flag      text,                       -- 'OVERCONFIDENT' | 'UNDERPERFORMING' | 'OK' | null
+  computed_at           timestamptz default now()
+);
+
+alter table ml_health enable row level security;
+create policy "public read ml_health"   on ml_health for select using (true);
+create policy "service write ml_health" on ml_health for all    using (true);
+
+create index if not exists ml_health_date_idx on ml_health (score_date desc);
