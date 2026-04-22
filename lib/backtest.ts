@@ -57,7 +57,7 @@ export interface TradeResult {
   pnl: number;
   pnlPct: number;
   rMultiple: number;
-  win: boolean;s
+  win: boolean;
   holdDays: number;
 }
 
