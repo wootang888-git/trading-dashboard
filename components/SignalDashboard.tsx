@@ -7,6 +7,7 @@ import SignalCard from "./SignalCard";
 import CalculatorModal from "./CalculatorModal";
 import MlDiscoveries from "./MlDiscoveries";
 import MlTrackRecord from "./MlTrackRecord";
+import SectorPulseBanner, { SectorPulseData } from "./SectorPulseBanner";
 import { RefreshCw, BookOpen } from "lucide-react";
 import { MlScore, MlPerformanceRow } from "@/lib/supabase";
 
@@ -77,8 +78,14 @@ interface SignalData {
   mlScore?: number | null;
   mlRank?: number | null;
   garchVol?: number | null;
+  gapPctLive?: number | null;
+  pmVolRatioLive?: number | null;
+  open930Live?: number | null;
   prevClose?: number | null;
   open?: number | null;
+  // Conviction history (populated after Phase D)
+  convictionTrend?: "rising" | "stable" | "falling" | null;
+  convictionStreak?: number | null;
 }
 
 interface DashboardData {
@@ -86,6 +93,10 @@ interface DashboardData {
   mlDiscoveries?: MlScore[];
   mlPerformance?: MlPerformanceRow[];
   marketCondition: "bull" | "bear" | "neutral";
+  breadthFlag?: "accumulation" | "neutral" | "distribution" | null;
+  breadthScore?: number | null;
+  sectorPulse?: SectorPulseData[] | null;
+  volumeAnomalies?: { ticker: string; pmVolRatioLive: number | null; mlScore: number; gapPctLive: number | null }[] | null;
   updatedAt: string;
 }
 
@@ -288,6 +299,28 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
     <div className="space-y-6">
       <MarketBanner condition={data.marketCondition} />
 
+      {/* Breadth kill switch — shown when pulse detects broad pre-market distribution */}
+      {data.breadthFlag === "distribution" && (
+        <div
+          className="rounded-xl px-4 py-3 flex items-start gap-3"
+          style={{ backgroundColor: "rgba(255, 179, 60, 0.10)", border: "1px solid rgba(255, 179, 60, 0.25)" }}
+        >
+          <span className="text-base shrink-0 mt-0.5">⚠️</span>
+          <div>
+            <span
+              className="font-semibold text-sm tracking-wide"
+              style={{ color: "#c8a84b" }}
+            >
+              BROAD MARKET SELLING
+            </span>
+            <span className="text-sm ml-2" style={{ color: "var(--on-surface-variant)" }}>
+              {Math.round((1 - (data.breadthScore ?? 0.5)) * 100)}% of S&P 500 gapping down pre-market.
+              Signals are active — consider reducing position size until breadth improves.
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Stats pills + session */}
       <div className="flex items-center gap-2 flex-wrap">
         {[
@@ -318,6 +351,11 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
         ))}
         <MarketSessionPill />
       </div>
+
+      {/* Sector pulse banner — shows hot/cold sectors from pre-market data */}
+      {data.sectorPulse && data.sectorPulse.length > 0 && (
+        <SectorPulseBanner sectors={data.sectorPulse} />
+      )}
 
       {/* Morning Brief — open positions health */}
       {openPositions !== null && openPositions.count > 0 && (
@@ -374,7 +412,7 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
           </h2>
           <div className="space-y-3">
             {trade.map((s) => (
-              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} />
+              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} />
             ))}
           </div>
         </section>
@@ -391,7 +429,7 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
           </p>
           <div className="space-y-3">
             {watch.map((s) => (
-              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} />
+              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} />
             ))}
           </div>
         </section>
@@ -405,7 +443,7 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
           </h2>
           <div className="space-y-3">
             {observe.map((s) => (
-              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} />
+              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} />
             ))}
           </div>
         </section>
@@ -435,6 +473,46 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
             refresh();
           }}
         />
+      )}
+
+      {/* Volume anomaly alerts — unusual pre-market activity (pm_vol_ratio > 5×) */}
+      {(data.volumeAnomalies?.length ?? 0) > 0 && (
+        <div className="rounded-xl overflow-hidden border border-white/10 bg-[rgba(53,53,52,0.6)]">
+          <div className="px-5 py-3 flex items-center gap-3 border-b border-white/10">
+            <span className="text-[10px] uppercase tracking-widest text-[#c8a84b] font-bold">
+              ⚡ Unusual Pre-Market Activity
+            </span>
+            <span className="text-[10px] text-[#555]">
+              {data.volumeAnomalies!.length} tickers with 5× normal volume — investigate before acting
+            </span>
+          </div>
+          <div className="divide-y divide-white/5">
+            {data.volumeAnomalies!.map((a) => (
+              <div key={a.ticker} className="px-5 py-2.5 flex items-center gap-4">
+                <span className="font-bold text-[#e5e2e1] text-sm w-16 shrink-0">{a.ticker}</span>
+                <span className="text-[11px] text-[#c8a84b] font-mono font-bold">
+                  {a.pmVolRatioLive?.toFixed(1)}× vol
+                </span>
+                {a.gapPctLive != null && (
+                  <span className={`text-[11px] font-mono ${a.gapPctLive > 0 ? "text-[#43ed9e]" : "text-[#ffb3ae]"}`}>
+                    {a.gapPctLive > 0 ? "+" : ""}{(a.gapPctLive * 100).toFixed(2)}%
+                  </span>
+                )}
+                <span className="text-[10px] text-[#555] ml-auto">ML {a.mlScore}%</span>
+                <button
+                  className="text-[10px] px-2 py-1 rounded border border-[#adc6ff]/20 text-[#adc6ff] hover:bg-[#adc6ff]/10 transition-colors shrink-0"
+                  onClick={() => fetch("/api/watchlist", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ ticker: a.ticker, strategy: "momentum" }),
+                  }).then(() => refresh())}
+                >
+                  + Watch
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
       {/* Floating calculator modal */}

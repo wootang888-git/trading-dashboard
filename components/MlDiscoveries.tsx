@@ -155,6 +155,25 @@ function DiscoveryDetail({
         </div>
       )}
 
+      {/* Live pulse stats */}
+      {(stock.gap_pct_live != null || stock.pm_vol_ratio_live != null) && (
+        <div className="flex items-center gap-4 rounded-lg bg-[#adc6ff]/5 border border-[#adc6ff]/10 px-3 py-2 text-[11px]">
+          <span className="text-[#666] uppercase tracking-widest text-[10px]">Pre-Market</span>
+          {stock.gap_pct_live != null && (
+            <span>
+              Gap: <span className={stock.gap_pct_live > 0 ? "text-[#45dfa4] font-bold" : "text-[#ffb3ae] font-bold"}>
+                {stock.gap_pct_live > 0 ? "+" : ""}{(stock.gap_pct_live * 100).toFixed(2)}%
+              </span>
+            </span>
+          )}
+          {stock.pm_vol_ratio_live != null && (
+            <span>
+              Vol: <span className="text-[#adc6ff] font-bold">{stock.pm_vol_ratio_live.toFixed(1)}×</span> avg
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Supplementary fundamentals */}
       <div className="flex items-center gap-4 pt-1 border-t border-white/5 text-[11px] text-[#888]">
         {stock.fwd_pe != null && (
@@ -202,8 +221,14 @@ export default function MlDiscoveries({ discoveries, onAddToWatchlist }: MlDisco
 
   if (discoveries.length === 0) return null;
 
+  // Use live gap data when available; fall back to feature_snapshot proxy
+  const getLiveGap = (d: MlScore) => d.gap_pct_live ?? d.feature_snapshot?.Gap_Pct ?? 0;
+  const isPulseConfirmed = (d: MlScore) =>
+    d.gap_pct_live != null && d.gap_pct_live > 0.01 &&
+    d.pm_vol_ratio_live != null && d.pm_vol_ratio_live > 1.5;
+
   const filtered = showGapUpOnly
-    ? discoveries.filter((d) => (d.feature_snapshot?.Gap_Pct ?? 0) >= 0.02)
+    ? discoveries.filter((d) => getLiveGap(d) >= 0.02)
     : discoveries;
 
   async function handleAdd(ticker: string) {
@@ -274,7 +299,8 @@ export default function MlDiscoveries({ discoveries, onAddToWatchlist }: MlDisco
                   ? "text-[#f9bd22]"
                   : "text-[#666]";
 
-              const gapPct = stock.feature_snapshot?.Gap_Pct ?? 0;
+              const gapPct = getLiveGap(stock);
+              const pulseOk = isPulseConfirmed(stock);
 
               return (
                 <div key={stock.ticker}>
@@ -286,7 +312,12 @@ export default function MlDiscoveries({ discoveries, onAddToWatchlist }: MlDisco
                       <span className="font-bold text-[#e5e2e1] text-sm font-['Space_Grotesk']">
                         {stock.ticker}
                       </span>
-                      {gapPct >= 0.01 && (
+                      {pulseOk && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-[#45dfa4]/15 text-[#45dfa4] border border-[#45dfa4]/25">
+                          Pulse ✓
+                        </span>
+                      )}
+                      {!pulseOk && gapPct >= 0.01 && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-[#45dfa4]/10 text-[#45dfa4] border border-[#45dfa4]/20">
                           +{(gapPct * 100).toFixed(1)}% gap
                         </span>

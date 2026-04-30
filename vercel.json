@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/signal-history/record",
+      "schedule": "30 21 * * 1-5"
+    }
+  ]
+}

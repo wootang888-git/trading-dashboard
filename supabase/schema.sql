@@ -93,10 +93,16 @@ create table if not exists signal_history (
   strategy text not null,
   score int,
   conviction_score int,
+  conviction_band text,                 -- 'trade' | 'watch' | 'observe'
+  ml_score_pct numeric,                 -- ml_score_pct at time of recording (0–100)
+  score_date date,                      -- market date, distinct from recorded_at
   entry_price numeric,
   stop_price numeric,
   recorded_at timestamptz default now()
 );
+
+create unique index if not exists signal_history_ticker_date_idx
+  on signal_history (ticker, score_date);
 
 alter table signal_history enable row level security;
 create policy "Allow all" on signal_history for all using (true) with check (true);
@@ -125,8 +131,12 @@ create table if not exists ml_scores (
   feature_snapshot jsonb,                  -- {RSI_14: 67.2, High52w_Pct: -0.03, ...}
   fwd_pe          numeric(8,2),            -- forward P/E ratio (null if unavailable)
   market_cap_b    numeric(8,2),            -- market cap in $B
-  garch_vol       numeric(6,4),            -- 1-day forward volatility in % pts (GARCH 1,1)
-  computed_at     timestamptz default now(),
+  garch_vol            numeric(6,4),       -- 1-day forward volatility in % pts (GARCH 1,1)
+  gap_pct_live         numeric,            -- actual 9:30 gap vs prev close (pulse_premarket.py)
+  pm_vol_ratio_live    numeric,            -- pre-market vol / 20d avg vol (pulse_premarket.py)
+  open_930_live        numeric,            -- actual 9:30 open price (for entry recalibration)
+  pulse_confirmed_at   timestamptz,        -- when pulse last wrote this row
+  computed_at          timestamptz default now(),
   unique(ticker, score_date)
 );
 
@@ -175,6 +185,8 @@ create table if not exists ml_health (
   top_third_return      numeric(8,4),               -- mean return_5d for top-ranked third
   bot_third_return      numeric(8,4),               -- mean return_5d for bottom-ranked third
   calibration_flag      text,                       -- 'OVERCONFIDENT' | 'UNDERPERFORMING' | 'OK' | null
+  breadth_score         numeric,                    -- fraction of tickers with positive gap (0.0–1.0)
+  breadth_flag          text,                       -- 'accumulation' | 'neutral' | 'distribution'
   computed_at           timestamptz default now()
 );
 

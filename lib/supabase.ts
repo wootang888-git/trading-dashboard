@@ -210,6 +210,19 @@ export interface MlScore {
   fwd_pe: number | null;
   market_cap_b: number | null;
   garch_vol: number | null;
+  // Pulse columns (written by pulse_premarket.py at 9:15 AM ET)
+  gap_pct_live: number | null;
+  pm_vol_ratio_live: number | null;
+  open_930_live: number | null;
+}
+
+export interface MlHealth {
+  score_date: string;
+  spy_regime: string;
+  vix_close: number | null;
+  calibration_flag: string | null;
+  breadth_score: number | null;
+  breadth_flag: "accumulation" | "neutral" | "distribution" | null;
 }
 
 export interface MlPerformanceRow {
@@ -244,7 +257,7 @@ export async function getMlScores(
   const d = scoreDate ?? await _latestScoreDate();
   const { data } = await supabase
     .from("ml_scores")
-    .select("ticker, ml_score, ml_rank, ml_score_pct, garch_vol")
+    .select("ticker, ml_score, ml_rank, ml_score_pct, garch_vol, gap_pct_live, pm_vol_ratio_live, open_930_live")
     .eq("score_date", d)
     .in("ticker", tickers);
   return Object.fromEntries((data ?? []).map((r) => [r.ticker, r as MlScore]));
@@ -259,7 +272,7 @@ export async function getMlDiscoveries(
   const d = scoreDate ?? await _latestScoreDate();
   let query = supabase
     .from("ml_scores")
-    .select("ticker, ml_score, ml_rank, ml_score_pct, feature_snapshot, fwd_pe, market_cap_b, garch_vol")
+    .select("ticker, ml_score, ml_rank, ml_score_pct, feature_snapshot, fwd_pe, market_cap_b, garch_vol, gap_pct_live, pm_vol_ratio_live, open_930_live")
     .eq("score_date", d)
     .order("ml_rank", { ascending: true })
     .limit(limit);
@@ -281,4 +294,53 @@ export async function getMlPerformance(limit = 20): Promise<MlPerformanceRow[]> 
     .order("score_date", { ascending: false })
     .limit(limit);
   return (data ?? []) as MlPerformanceRow[];
+}
+
+/** Sector-level pulse aggregation — avg gap and breadth per sector ETF.
+ *  Only populated after pulse_premarket.py has run for the day. */
+export async function getMlSectorPulse(
+  sectorEtfMap: Record<string, string>,
+  scoreDate?: string,
+): Promise<import("@/components/SectorPulseBanner").SectorPulseData[]> {
+  const d = scoreDate ?? await _latestScoreDate();
+  const { data } = await supabase
+    .from("ml_scores")
+    .select("ticker, gap_pct_live")
+    .eq("score_date", d)
+    .not("gap_pct_live", "is", null);
+
+  if (!data || data.length === 0) return [];
+
+  // Group by sector ETF using the provided map
+  const byEtf: Record<string, number[]> = {};
+  for (const row of data) {
+    const etf = sectorEtfMap[row.ticker];
+    if (!etf || etf === "SPY" || etf === "QQQ") continue; // skip broad market
+    if (!byEtf[etf]) byEtf[etf] = [];
+    byEtf[etf].push(row.gap_pct_live as number);
+  }
+
+  return Object.entries(byEtf)
+    .filter(([, gaps]) => gaps.length >= 2) // need at least 2 tickers per sector
+    .map(([etf, gaps]) => {
+      const avgGap = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+      const pctPositive = gaps.filter((g) => g > 0).length / gaps.length;
+      const direction: "hot" | "warm" | "neutral" | "cold" =
+        avgGap > 0.01 && pctPositive > 0.6 ? "hot" :
+        avgGap > 0 ? "warm" :
+        avgGap > -0.01 ? "neutral" : "cold";
+      return { etf, avgGap, pctPositive, direction };
+    })
+    .sort((a, b) => b.avgGap - a.avgGap);
+}
+
+/** Latest ml_health row — regime, VIX, calibration flag, and pulse breadth signal. */
+export async function getMlHealth(): Promise<MlHealth | null> {
+  const { data } = await supabase
+    .from("ml_health")
+    .select("score_date, spy_regime, vix_close, calibration_flag, breadth_score, breadth_flag")
+    .order("score_date", { ascending: false })
+    .limit(1)
+    .single();
+  return (data as MlHealth) ?? null;
 }

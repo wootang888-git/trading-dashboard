@@ -59,8 +59,13 @@ interface SignalCardProps {
   mlScore?: number | null;
   mlRank?: number | null;
   garchVol?: number | null;
+  gapPctLive?: number | null;
+  pmVolRatioLive?: number | null;
+  open930Live?: number | null;
   prevClose?: number | null;
   open?: number | null;
+  convictionTrend?: "rising" | "stable" | "falling" | null;
+  convictionStreak?: number | null;
 }
 
 // Metric tile — hover on desktop, tap on mobile. Only one tooltip open at a time.
@@ -112,6 +117,8 @@ export default function SignalCard({
   entryNote, stopNote, entryPrice, stopPrice,
   strategy, conditions, sa, onOpenCalc,
   mlScore, mlRank, garchVol,
+  gapPctLive, pmVolRatioLive, open930Live,
+  convictionTrend, convictionStreak,
   prevClose, open,
 }: SignalCardProps) {
   const [modalOpen, setModalOpen] = useState(false);
@@ -208,6 +215,17 @@ export default function SignalCard({
                   ML {mlScore}%{mlRank != null && <span className="text-[#6b7280] ml-1">#{mlRank}</span>}
                 </span>
               )}
+              {/* Conviction trend chips (D3 — populated after signal_history accumulates) */}
+              {convictionTrend === "rising" && convictionStreak != null && convictionStreak <= 3 && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded font-bold border bg-[#45dfa4]/10 text-[#45dfa4] border-[#45dfa4]/20">
+                  ↑ Momentum Building
+                </span>
+              )}
+              {convictionTrend === "falling" && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded font-bold border bg-[#ffb3ae]/10 text-[#ffb3ae] border-[#ffb3ae]/20">
+                  ↓ Thesis Weakening
+                </span>
+              )}
             </div>
             <p className="text-[10px] text-[#bacbbd] mt-0.5 uppercase tracking-wider">
               {strategy.replace(/_/g, " ")}
@@ -224,11 +242,17 @@ export default function SignalCard({
             </button>
           </div>
 
-          {/* Entry price */}
+          {/* Entry price + live recalibration chip */}
           {entryPrice && (
             <div className="shrink-0 hidden md:block">
               <p className="text-[10px] text-[#bacbbd] uppercase tracking-wider mb-0.5">Entry</p>
               <p className="font-mono text-sm text-[#dde3ec]">${entryPrice.toFixed(2)}</p>
+              {open930Live != null &&
+                Math.abs(open930Live + 0.05 - entryPrice) / entryPrice > 0.005 && (
+                <p className="text-[9px] text-[#adc6ff] mt-0.5">
+                  Live ~${(open930Live + 0.05).toFixed(2)}
+                </p>
+              )}
             </div>
           )}
 

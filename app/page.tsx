@@ -1,5 +1,6 @@
 import SignalDashboard from "@/components/SignalDashboard";
-import { getWatchlist, getMlScores, getMlDiscoveries, getMlPerformance } from "@/lib/supabase";
+import { getWatchlist, getMlScores, getMlDiscoveries, getMlPerformance, getMlHealth, getMlSectorPulse } from "@/lib/supabase";
+import { getConvictionTrends } from "@/lib/conviction-history";
 import { getQuote, getHistorical, getNews, HistoricalBar } from "@/lib/yahoo";
 import { buildSignal } from "@/lib/signals";
 import { SECTOR_ETF } from "@/lib/watchlist";
@@ -84,10 +85,13 @@ async function getInitialData() {
     : "neutral";
 
   const watchlistTickers = watchlist.map((w) => w.ticker);
-  const [mlScores, mlDiscoveries, mlPerformance] = await Promise.all([
+  const [mlScores, mlDiscoveries, mlPerformance, mlHealth, sectorPulse, convictionTrends] = await Promise.all([
     getMlScores(watchlistTickers),
     getMlDiscoveries(watchlistTickers, 10),
     getMlPerformance(20),
+    getMlHealth(),
+    getMlSectorPulse(SECTOR_ETF),
+    getConvictionTrends(watchlistTickers),
   ]);
 
   const enrichedSignals = (signals as NonNullable<(typeof signals)[number]>[]).map((s) => ({
@@ -95,6 +99,11 @@ async function getInitialData() {
     mlScore: mlScores[s.ticker]?.ml_score_pct ?? null,
     mlRank: mlScores[s.ticker]?.ml_rank ?? null,
     garchVol: mlScores[s.ticker]?.garch_vol ?? null,
+    gapPctLive: mlScores[s.ticker]?.gap_pct_live ?? null,
+    pmVolRatioLive: mlScores[s.ticker]?.pm_vol_ratio_live ?? null,
+    open930Live: mlScores[s.ticker]?.open_930_live ?? null,
+    convictionTrend: convictionTrends[s.ticker]?.trend ?? "stable",
+    convictionStreak: convictionTrends[s.ticker]?.streak ?? 0,
   }));
 
   return {
@@ -102,6 +111,10 @@ async function getInitialData() {
     mlDiscoveries,
     mlPerformance,
     marketCondition,
+    breadthFlag: mlHealth?.breadth_flag ?? null,
+    breadthScore: mlHealth?.breadth_score ?? null,
+    sectorPulse,
+    volumeAnomalies: [],  // computed server-side in API route only (needs mlDiscoveries with pulse data)
     updatedAt: new Date().toISOString(),
   };
 }
