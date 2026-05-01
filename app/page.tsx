@@ -25,6 +25,17 @@ async function getInitialData() {
     })
   );
 
+  const sectorEtfAboveMA20Map: Record<string, boolean> = {};
+  for (const etf of neededSectorEtfs) {
+    const sBars = sectorBarMap[etf] ?? [];
+    if (sBars.length >= 20) {
+      const ma20 = sBars.slice(-20).reduce((s, b) => s + b.close, 0) / 20;
+      sectorEtfAboveMA20Map[etf] = sBars[sBars.length - 1].close > ma20;
+    } else {
+      sectorEtfAboveMA20Map[etf] = true;
+    }
+  }
+
   const results = await Promise.all(
     watchlist.map(async ({ ticker, strategy }) => {
       const [quote, bars, news, finnhub] = await Promise.all([
@@ -36,7 +47,8 @@ async function getInitialData() {
       if (!quote || bars.length === 0) return null;
       const sectorEtf = SECTOR_ETF[ticker];
       const sectorBars = sectorEtf ? (sectorBarMap[sectorEtf] ?? []) : [];
-      const signal = buildSignal(ticker, strategy, bars, quote.high52w, spyBars, sectorBars);
+      const sectorEtfAboveMA20 = sectorEtf ? (sectorEtfAboveMA20Map[sectorEtf] ?? true) : true;
+      const signal = buildSignal(ticker, strategy, bars, quote.high52w, spyBars, sectorBars, sectorEtfAboveMA20);
 
       const POSITIVE = ["buy", "bullish", "outperform", "upgrade", "strong", "surge", "rally", "beat", "upside", "growth"];
       const NEGATIVE = ["sell", "bearish", "underperform", "downgrade", "weak", "crash", "avoid", "miss", "cut", "risk"];

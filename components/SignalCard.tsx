@@ -31,6 +31,16 @@ interface ValidationResult {
   checked_at: string;
 }
 
+type SignalTier = "HIGH_CONVICTION" | "TACTICAL_BUY" | "WATCH_EXTENDED" | "OBSERVE" | "EXIT";
+
+interface HardGates {
+  rsiOverheated: boolean;
+  bbExtended: boolean;
+  targetBlocked: boolean;
+  sectorWeak: boolean;
+  volPriceUnconfirmed: boolean;
+}
+
 interface SignalCardProps {
   ticker: string;
   strength: string;
@@ -66,6 +76,14 @@ interface SignalCardProps {
   open?: number | null;
   convictionTrend?: "rising" | "stable" | "falling" | null;
   convictionStreak?: number | null;
+  // Phase 1 / Phase 2: tier + hard gates
+  tier?: SignalTier;
+  hardGates?: HardGates;
+  volPriceConfirmed?: boolean;
+  sectorEtfAboveMA20?: boolean;
+  rsiAtEntry?: number;
+  rsVsSpyNegativeStreak?: number;
+  ema8?: number;
 }
 
 // Metric tile — hover on desktop, tap on mobile. Only one tooltip open at a time.
@@ -109,6 +127,44 @@ function signalBadge(strength: string) {
   return { label: "Neutral", cls: "bg-[#252b31] text-[#bacbbd] border border-[#3c4a40]/30" };
 }
 
+// Tier color for ticker symbol and avatar tint
+function tierColor(tier?: SignalTier): string {
+  switch (tier) {
+    case "HIGH_CONVICTION": return "#43ed9e";
+    case "TACTICAL_BUY":   return "#adc6ff";
+    case "WATCH_EXTENDED": return "#ffb33c";
+    case "OBSERVE":        return "#c8a84b";
+    case "EXIT":           return "#ffb3ae";
+    default:               return "#dde3ec";
+  }
+}
+
+// Tier-aware badge (Phase 2) — kept for legacy fallback only
+function tierBadge(tier?: SignalTier) {
+  switch (tier) {
+    case "HIGH_CONVICTION":
+      return { label: "HIGH CONVICTION", cls: "bg-[#43ed9e]/15 text-[#43ed9e] border border-[#43ed9e]/30" };
+    case "TACTICAL_BUY":
+      return { label: "TACTICAL BUY", cls: "bg-[#adc6ff]/15 text-[#adc6ff] border border-[#adc6ff]/30" };
+    case "WATCH_EXTENDED":
+      return { label: "EXTENDED", cls: "bg-[#ffb33c]/15 text-[#ffb33c] border border-[#ffb33c]/30" };
+    case "OBSERVE":
+      return { label: "OBSERVE", cls: "bg-[#c8a84b]/15 text-[#c8a84b] border border-[#c8a84b]/30" };
+    case "EXIT":
+      return { label: "EXIT", cls: "bg-[#ffb3ae]/15 text-[#ffb3ae] border border-[#ffb3ae]/30" };
+    default:
+      return null;
+  }
+}
+
+const GATE_LABELS: Record<keyof HardGates, string> = {
+  rsiOverheated: "RSI overheated (>78)",
+  bbExtended: "BB extended (>90%)",
+  targetBlocked: "Target > 52w high",
+  sectorWeak: "Sector below MA20",
+  volPriceUnconfirmed: "No vol-price confirmation",
+};
+
 export default function SignalCard({
   ticker, strength, price, changePct,
   convictionScore, convictionBand, sectorRs, validation,
@@ -120,6 +176,7 @@ export default function SignalCard({
   gapPctLive, pmVolRatioLive, open930Live,
   convictionTrend, convictionStreak,
   prevClose, open,
+  tier, hardGates, ema8,
 }: SignalCardProps) {
   const [modalOpen, setModalOpen] = useState(false);
   const [faqOpen, setFaqOpen] = useState(false);
@@ -146,7 +203,63 @@ export default function SignalCard({
   const targetPrice = entryPrice && risk ? entryPrice + 3 * risk : null;
   const earningsWarning = sa?.earningsDays !== null && sa?.earningsDays !== undefined && sa.earningsDays <= 7;
 
-  const badge = signalBadge(strength);
+  const legacyBadge = signalBadge(strength);
+  const tBadge = tierBadge(tier);
+  const badge = tBadge ?? legacyBadge;
+  const tColor = tierColor(tier);
+
+  // Gates that fired (true = blocked High Conviction)
+  const firedGates: (keyof HardGates)[] = hardGates
+    ? (Object.keys(hardGates) as (keyof HardGates)[]).filter((k) => hardGates[k])
+    : [];
+
+  // Tactical Buy: pick the most important fired gate (priority order)
+  const tacticalGatePriority: (keyof HardGates)[] = [
+    "targetBlocked",
+    "volPriceUnconfirmed",
+    "sectorWeak",
+    "rsiOverheated",
+    "bbExtended",
+  ];
+  const leadGate = tacticalGatePriority.find((g) => firedGates.includes(g));
+
+  const tacticalGateFooter = (g?: keyof HardGates): string | null => {
+    switch (g) {
+      case "targetBlocked":
+        return "consider a half position — the price target sits above the 52-week high, which is a common resistance level. watch for a strong breakout candle above it before sizing up.";
+      case "volPriceUnconfirmed":
+        return "volume didn't confirm the price move today. wait for a session where both volume and price range expand together before entering.";
+      case "sectorWeak":
+        return "the sector this stock trades in is in a downtrend. strong stocks can still work, but you're swimming against the current — keep your position smaller than usual.";
+      case "rsiOverheated":
+        return "the stock is overbought right now. wait for RSI to cool below 75 before entering.";
+      case "bbExtended":
+        return "price is stretched near the top of its bollinger band. better entry likely in the next few days after it settles.";
+      default:
+        return null;
+    }
+  };
+
+  // Footer guidance per tier — OBSERVE gets no footer
+  const footerText = (() => {
+    switch (tier) {
+      case "HIGH_CONVICTION":
+        return "Enter full position — all quality checks passed.";
+      case "TACTICAL_BUY":
+        return tacticalGateFooter(leadGate);
+      case "WATCH_EXTENDED":
+        return ema8 && ema8 > 0
+          ? `don't buy yet — this stock has moved too far, too fast. wait for it to pull back to the 8-day average (~$${ema8.toFixed(2)}).`
+          : "don't buy yet — this stock has moved too far, too fast. wait for it to pull back to the 8-day average.";
+      case "EXIT":
+        return "Close or reduce your position. This setup has broken down.";
+      case "OBSERVE":
+      default:
+        return null;
+    }
+  })();
+
+  const footerColor = "text-[#8a9ba8]";
 
   // Ticker avatar colors — cycles through tertiary/primary/secondary per strength
   const avatarColor =
@@ -174,9 +287,12 @@ export default function SignalCard({
           className="flex items-center gap-4 px-5 py-4 cursor-pointer hover:bg-[#252b31]/30 transition-colors"
           onClick={() => setExpanded((v) => !v)}
         >
-          {/* Ticker avatar */}
-          <div className="w-9 h-9 rounded-lg bg-[#252b31] flex items-center justify-center shrink-0">
-            <span className={`font-bold text-[10px] tracking-wider ${avatarColor}`}>
+          {/* Ticker avatar — background tinted by tier */}
+          <div
+            className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+            style={{ backgroundColor: `${tColor}18` }}
+          >
+            <span className="font-bold text-[10px] tracking-wider" style={{ color: tColor }}>
               {ticker.slice(0, 4)}
             </span>
           </div>
@@ -184,9 +300,13 @@ export default function SignalCard({
           {/* Asset + strategy */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-bold text-base text-[#dde3ec] font-['Space_Grotesk']">
+              {/* Ticker symbol — white, tappable to open FAQ (mobile entry point) */}
+              <button
+                className="font-bold text-base font-['Space_Grotesk'] text-[#dde3ec] hover:brightness-125 transition-colors"
+                onClick={(e) => { e.stopPropagation(); setFaqMode("conviction"); setFaqOpen(true); }}
+              >
                 {ticker}
-              </span>
+              </button>
               {isAI && (
                 <span
                   className="text-[10px] px-1.5 py-0.5 rounded bg-[#00e7f6]/10 text-[#00e7f6] font-bold tracking-widest uppercase border border-[#00e7f6]/15 cursor-pointer hover:bg-[#00e7f6]/20 transition-colors"
@@ -226,21 +346,21 @@ export default function SignalCard({
                   ↓ Thesis Weakening
                 </span>
               )}
+              {/* Conviction Streak — High Conviction held N consecutive days */}
+              {tier === "HIGH_CONVICTION" && convictionStreak != null && convictionStreak >= 3 && (
+                <span
+                  className="text-[10px] px-1.5 py-0.5 rounded font-bold border bg-[#43ed9e]/10 text-[#43ed9e] border-[#43ed9e]/30"
+                  title={`Signal held High Conviction for ${convictionStreak} consecutive days — sustained institutional interest.`}
+                >
+                  Day {convictionStreak}
+                </span>
+              )}
             </div>
             <p className="text-[10px] text-[#bacbbd] mt-0.5 uppercase tracking-wider">
               {strategy.replace(/_/g, " ")}
             </p>
           </div>
 
-          {/* Signal badge — tap opens FAQ */}
-          <div className="shrink-0">
-            <button
-              className={`text-[7px] px-1.5 py-0.5 md:text-[10px] md:px-2.5 md:py-1 rounded font-bold tracking-widest uppercase cursor-pointer ${badge.cls}`}
-              onClick={(e) => { e.stopPropagation(); setFaqMode("conviction"); setFaqOpen(true); }}
-            >
-              {badge.label}
-            </button>
-          </div>
 
           {/* Entry price + live recalibration chip */}
           {entryPrice && (
@@ -290,6 +410,16 @@ export default function SignalCard({
             {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
           </div>
         </div>
+
+        {/* ── Actionable footer (always visible) ── */}
+        {footerText && (
+          <div
+            className={`px-5 py-2 text-[11px] font-medium border-t border-[#3c4a40]/20 ${footerColor}`}
+            style={{ backgroundColor: "rgba(14, 20, 26, 0.4)" }}
+          >
+            {footerText}
+          </div>
+        )}
 
         {/* ── Expanded detail panel ── */}
         {expanded && (
@@ -392,6 +522,25 @@ export default function SignalCard({
               </div>
             )}
 
+            {/* Why not High Conviction? — gate reasons for TACTICAL_BUY and WATCH_EXTENDED */}
+            {(tier === "TACTICAL_BUY" || tier === "WATCH_EXTENDED") && firedGates.length > 0 && (
+              <div className="mb-3 rounded-lg bg-[#0e141a] px-2.5 py-2">
+                <p className="text-[10px] text-[#bacbbd]/60 uppercase tracking-widest mb-1.5">
+                  What&apos;s holding it back:
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {firedGates.map((g) => (
+                    <span
+                      key={g}
+                      className="text-[9px] px-1.5 py-0.5 rounded bg-[#252b31] text-[#bacbbd]/70 border border-[#3c4a40]/30"
+                    >
+                      {GATE_LABELS[g]}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Validation checklist — collapsible */}
             {validation.notes.length > 0 && (
               <div className="mb-3 rounded-lg bg-[#0e141a] overflow-hidden">
@@ -460,8 +609,21 @@ export default function SignalCard({
                 <p className="text-xs font-medium text-[#43ed9e]">▲ {entryNote}</p>
                 <p className="text-xs font-medium text-[#ffb3ae]">▼ {stopNote}</p>
                 {risk && targetPrice && (
-                  <p className="text-[10px] text-[#bacbbd] pt-1 border-t border-[#3c4a40]/20">
-                    R:R {((targetPrice - entryPrice) / risk).toFixed(1)}:1 · Target ${targetPrice.toFixed(2)}
+                  <p className="text-[10px] text-[#bacbbd] pt-1 border-t border-[#3c4a40]/20 flex items-center gap-1.5">
+                    <span>R:R {((targetPrice - entryPrice) / risk).toFixed(1)}:1 · Target ${targetPrice.toFixed(2)}</span>
+                    {hardGates && (hardGates.targetBlocked ? (
+                      <span
+                        className="text-[#ffb3ae]"
+                        title="Resistance Alert: Target requires breaking 52-week high"
+                        aria-label="Resistance alert"
+                      >⚠</span>
+                    ) : (
+                      <span
+                        className="text-[#43ed9e]"
+                        title="Clear Sky: No major resistance to target"
+                        aria-label="Clear path to target"
+                      >🛡</span>
+                    ))}
                   </p>
                 )}
               </div>

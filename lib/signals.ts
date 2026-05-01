@@ -59,6 +59,21 @@ export interface ValidationResult {
   checked_at: string;       // ISO timestamp
 }
 
+export type SignalTier =
+  | "HIGH_CONVICTION"
+  | "TACTICAL_BUY"
+  | "WATCH_EXTENDED"
+  | "OBSERVE"
+  | "EXIT";
+
+export interface HardGates {
+  rsiOverheated: boolean;       // RSI > 78
+  bbExtended: boolean;          // bbPct > 0.90
+  targetBlocked: boolean;       // 3:1 target > 52w high
+  sectorWeak: boolean;          // sectorEtf.close < sectorEtf.ma20
+  volPriceUnconfirmed: boolean; // !(volume > 1.5×avg AND range > 1.2×avgRange of last 5 bars)
+}
+
 export interface Signal {
   ticker: string;
   score: number;
@@ -74,6 +89,13 @@ export interface Signal {
   convictionBand: "high" | "medium" | "low";  // high ≥90, medium 70–89, low <70
   sectorRs: number | null;       // stock 20-bar return vs sector ETF (positive = outperforming)
   validation: ValidationResult;
+  tier: SignalTier;
+  hardGates: HardGates;
+  volPriceConfirmed: boolean;
+  sectorEtfAboveMA20: boolean;
+  rsiAtEntry: number;
+  bbPct: number;
+  rsVsSpyNegativeStreak: number;
 }
 
 // ─── Indicator helpers ───────────────────────────────────────────────────────
@@ -779,10 +801,9 @@ export function validateSignal(
     notes.push(`✓ Stop is ${(riskPct * 100).toFixed(1)}% below entry — valid risk`);
   }
 
-  // ── R:R feasibility: 3:1 target should be below the 52w high ───────────────
+  // ── R:R feasibility: 3:1 target vs 52w high (informational; hard gate handles blocking) ───
   const target = entryPrice + 3 * (entryPrice - stopPrice);
   if (high52w > 0 && target > high52w * 1.05) {
-    dataQualityPts -= 3;
     notes.push(`✗ 3:1 target $${target.toFixed(2)} exceeds 52w high $${high52w.toFixed(2)} — hard resistance overhead`);
   } else {
     notes.push(`✓ 3:1 target $${target.toFixed(2)} is achievable within price history`);
@@ -870,6 +891,82 @@ function computeConviction(
   return Math.max(0, Math.min(100, total));
 }
 
+// ─── Hard Gates ──────────────────────────────────────────────────────────────
+
+/** Computes vol-price confirmation: volume surge AND price range expansion vs last 5 bars. */
+export function computeVolPriceConfirmed(bars: HistoricalBar[], volumeRatio: number): boolean {
+  if (bars.length < 6) return false;
+  const latestBar = bars[bars.length - 1];
+  const currentRange = latestBar.high - latestBar.low;
+  const last5 = bars.slice(-6, -1); // 5 bars BEFORE latest
+  const avgRange = last5.reduce((s, b) => s + (b.high - b.low), 0) / last5.length;
+  return volumeRatio >= 1.5 && avgRange > 0 && currentRange >= avgRange * 1.2;
+}
+
+export function evaluateHardGates(
+  ind: Indicators,
+  entryPrice: number,
+  stopPrice: number,
+  high52w: number,
+  sectorEtfAboveMA20: boolean,
+  volPriceConfirmed: boolean
+): HardGates {
+  const target = entryPrice + 3 * (entryPrice - stopPrice);
+  return {
+    rsiOverheated: ind.rsi14 > 78,
+    bbExtended: ind.bbPct > 0.90,
+    targetBlocked: high52w > 0 && target > high52w,
+    sectorWeak: !sectorEtfAboveMA20,
+    volPriceUnconfirmed: !volPriceConfirmed,
+  };
+}
+
+/** Compute how many of the last 3 bars the stock underperformed SPY on 20-bar return basis. */
+function computeRsVsSpyNegativeStreak(bars: HistoricalBar[], spyBars: HistoricalBar[]): number {
+  if (bars.length < 23 || spyBars.length < 23) return 0;
+  const len = Math.min(bars.length, spyBars.length);
+  let streak = 0;
+  for (let offset = 0; offset < 3; offset++) {
+    const endIdx = len - offset;
+    const startIdx = endIdx - 20;
+    if (startIdx < 0) break;
+    const stockSlice = bars.slice(startIdx, endIdx);
+    const spySlice = spyBars.slice(spyBars.length - (len - startIdx), spyBars.length - offset);
+    if (stockSlice.length < 20 || spySlice.length < 20 || stockSlice[0].close === 0 || spySlice[0].close === 0) break;
+    const stockReturn = (stockSlice[stockSlice.length - 1].close - stockSlice[0].close) / stockSlice[0].close;
+    const spyReturn = (spySlice[spySlice.length - 1].close - spySlice[0].close) / spySlice[0].close;
+    if (stockReturn < spyReturn) streak++;
+    else break;
+  }
+  return streak;
+}
+
+function assignTier(
+  convictionScore: number,
+  hardGates: HardGates,
+  latestClose: number,
+  ema8: number,
+  rsVsSpyNegativeStreak: number
+): SignalTier {
+  // 1. EXIT
+  if (latestClose < ema8 && rsVsSpyNegativeStreak >= 3) return "EXIT";
+  // 2. WATCH_EXTENDED
+  if (hardGates.rsiOverheated || hardGates.bbExtended) return "WATCH_EXTENDED";
+  const anyHardGateFailed =
+    hardGates.rsiOverheated ||
+    hardGates.bbExtended ||
+    hardGates.targetBlocked ||
+    hardGates.sectorWeak ||
+    hardGates.volPriceUnconfirmed;
+  // 3. HIGH_CONVICTION
+  if (convictionScore > 82 && !anyHardGateFailed) return "HIGH_CONVICTION";
+  // 4. TACTICAL_BUY
+  if (convictionScore >= 70 && convictionScore <= 81) return "TACTICAL_BUY";
+  if (convictionScore > 82 && anyHardGateFailed) return "TACTICAL_BUY";
+  // 5. OBSERVE
+  return "OBSERVE";
+}
+
 // ─── buildSignal ─────────────────────────────────────────────────────────────
 
 export function buildSignal(
@@ -878,7 +975,8 @@ export function buildSignal(
   bars: HistoricalBar[],
   high52w: number,
   spyBars: HistoricalBar[] = [],
-  sectorBars: HistoricalBar[] = []
+  sectorBars: HistoricalBar[] = [],
+  sectorEtfAboveMA20: boolean = true
 ): Signal {
   const ind = computeIndicators(bars, high52w, spyBars, ticker);
 
@@ -905,9 +1003,24 @@ export function buildSignal(
     : convictionScore >= 70 ? "medium"
     : "low";
 
+  const volPriceConfirmed = computeVolPriceConfirmed(bars, ind.volumeRatio);
+  const hardGates = evaluateHardGates(ind, entryPrice, stopPrice, high52w, sectorEtfAboveMA20, volPriceConfirmed);
+  const rsVsSpyNegativeStreak = spyBars.length >= 23 && bars.length >= 23
+    ? computeRsVsSpyNegativeStreak(bars, spyBars)
+    : 0;
+  const latestClose = bars.length > 0 ? bars[bars.length - 1].close : 0;
+  const tier = assignTier(convictionScore, hardGates, latestClose, ind.ema8, rsVsSpyNegativeStreak);
+
   return {
     ticker, score, strength, strategy, indicators: ind,
     entryNote, stopNote, entryPrice, stopPrice, conditions,
     convictionScore, convictionBand, sectorRs, validation,
+    tier,
+    hardGates,
+    volPriceConfirmed,
+    sectorEtfAboveMA20,
+    rsiAtEntry: ind.rsi14,
+    bbPct: ind.bbPct,
+    rsVsSpyNegativeStreak,
   };
 }

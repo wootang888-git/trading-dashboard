@@ -206,36 +206,50 @@ export default function FAQModal({ open, onClose, mode = "conviction", mlScore, 
 
           <div className="border-t border-[#3c4a40]/20" />
 
-          {/* Signal Tiers */}
+          {/* Signal Tiers — 5-tier system */}
           <section>
             <h3 className="text-[12px] md:text-[14px] font-bold uppercase tracking-widest text-[#bacbbd]/50 mb-3">
-              Signal Tiers
+              Signal Tiers (5-tier)
             </h3>
             <div className="space-y-2">
               {[
                 {
-                  range: "90–100",
-                  label: "Top Pick · Strong Buy",
+                  range: "> 82",
+                  label: "High Conviction",
                   color: "text-[#43ed9e]",
                   bg: "bg-[#43ed9e]/10",
-                  desc: "All technical, R:R, and sector filters aligned. Highest-grade setup.",
+                  desc: "Composite score above 82 AND all 5 hard gates pass. Clear to enter full position.",
                 },
                 {
-                  range: "70–89",
-                  label: "Buy",
-                  color: "text-[#00d084]",
-                  bg: "bg-[#00d084]/10",
-                  desc: "Core criteria met. Proceed with standard position sizing.",
+                  range: "70–82",
+                  label: "Tactical Buy",
+                  color: "text-[#adc6ff]",
+                  bg: "bg-[#adc6ff]/10",
+                  desc: "Score ≥70, OR score >82 with at least one hard gate not met. Strong setup with a specific reason holding it back from High Conviction.",
                 },
                 {
-                  range: "< 70",
-                  label: "Watch",
-                  color: "text-[#bacbbd]",
-                  bg: "bg-[#bacbbd]/10",
-                  desc: "Below trade threshold. Monitor but do not enter yet.",
+                  range: "any",
+                  label: "Watch — Extended",
+                  color: "text-[#ffb33c]",
+                  bg: "bg-[#ffb33c]/10",
+                  desc: "This stock has moved too far, too fast. Buying now means chasing — the price is stretched above its normal range, like a rubber band pulled tight. Wait for it to pull back to the 8-day moving average before entering. The setup is valid; the timing is not.",
+                },
+                {
+                  range: "any",
+                  label: "Observe",
+                  color: "text-[#c8a84b]",
+                  bg: "bg-[#c8a84b]/10",
+                  desc: "Weakening thesis: target above 52w high, sector ETF below MA20, or 3-day RS lag vs SPY. Hold, do not add.",
+                },
+                {
+                  range: "any",
+                  label: "Exit",
+                  color: "text-[#ffb3ae]",
+                  bg: "bg-[#ffb3ae]/10",
+                  desc: "Price below 8-EMA AND RS vs SPY negative 3 days running. Reduce or close position.",
                 },
               ].map(({ range, label, color, bg, desc }) => (
-                <div key={range} className={`rounded-lg p-3 ${bg}`}>
+                <div key={label} className={`rounded-lg p-3 ${bg}`}>
                   <div className="flex items-center gap-2 mb-1">
                     <span className={`text-[12px] md:text-[14px] font-bold ${color}`}>{range}</span>
                     <span className={`text-[12px] md:text-[14px] font-bold uppercase tracking-wider ${color}`}>{label}</span>
@@ -244,6 +258,59 @@ export default function FAQModal({ open, onClose, mode = "conviction", mlScore, 
                 </div>
               ))}
             </div>
+          </section>
+
+          <div className="border-t border-[#3c4a40]/20" />
+
+          {/* Hard Gates */}
+          <section>
+            <h3 className="text-[12px] md:text-[14px] font-bold uppercase tracking-widest text-[#bacbbd]/50 mb-3">
+              The 5 Hard Gates
+            </h3>
+            <p className="text-[12px] md:text-[14px] text-[#bacbbd]/60 mb-3 leading-relaxed">
+              High Conviction requires <span className="text-[#dde3ec] font-medium">all five gates to pass</span>. If even one gate fires, the signal drops to Tactical Buy regardless of score.
+            </p>
+            <div className="space-y-2.5">
+              {[
+                { label: "RSI Overheated", desc: "RSI 14 above 78 — momentum stretched, entry risk of immediate pullback." },
+                { label: "BB Extended", desc: "Bollinger Band %B above 90% — price hugging upper band, mean reversion likely." },
+                { label: "Target Blocked", desc: "3:1 reward target sits above the 52-week high. Path requires breaking major resistance." },
+                { label: "Sector Weak", desc: "Sector ETF closes below its 20-day moving average. Industry tide is against the trade." },
+                { label: "Vol-Price Unconfirmed", desc: "Volume <1.5× average OR daily range <1.2× recent. Move lacks institutional conviction." },
+              ].map(({ label, desc }) => (
+                <div key={label} className="flex items-start gap-3">
+                  <span className="text-[14px] shrink-0 mt-0.5">🚧</span>
+                  <div>
+                    <p className="text-[14px] md:text-[15px] font-medium text-[#dde3ec]">{label}</p>
+                    <p className="text-[12px] md:text-[14px] text-[#bacbbd]/60 mt-0.5 leading-relaxed">{desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <div className="border-t border-[#3c4a40]/20" />
+
+          {/* Vol-Price Confirmation */}
+          <section>
+            <h3 className="text-[12px] md:text-[14px] font-bold uppercase tracking-widest text-[#bacbbd]/50 mb-3">
+              Vol-Price Confirmation
+            </h3>
+            <p className="text-[12px] md:text-[14px] text-[#bacbbd]/60 leading-relaxed">
+              A real breakout shows up on the tape: today&apos;s volume is at least <span className="text-[#dde3ec] font-medium">1.5× the recent average</span> AND today&apos;s high-low range is at least <span className="text-[#dde3ec] font-medium">1.2× the 5-day average range</span>. Without both, the price move is suspect — likely thin trading or noise.
+            </p>
+          </section>
+
+          <div className="border-t border-[#3c4a40]/20" />
+
+          {/* Sector ETF MA20 Gate */}
+          <section>
+            <h3 className="text-[12px] md:text-[14px] font-bold uppercase tracking-widest text-[#bacbbd]/50 mb-3">
+              Sector ETF MA20 Gate
+            </h3>
+            <p className="text-[12px] md:text-[14px] text-[#bacbbd]/60 leading-relaxed">
+              We map every signal to its sector ETF (e.g. XLK for tech, XLF for financials). If that ETF closes <span className="text-[#dde3ec] font-medium">below its 20-day moving average</span>, the entire industry is in a short-term downtrend — even a strong individual setup faces sector headwinds. Wait for the sector to recover above MA20 before sizing up.
+            </p>
           </section>
 
           <div className="border-t border-[#3c4a40]/20" />

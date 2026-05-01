@@ -43,6 +43,18 @@ export async function GET() {
     })
   );
 
+  // Compute MA20 for each sector ETF (mean of last 20 closes); ETF above its MA20 = healthy regime
+  const sectorEtfAboveMA20Map: Record<string, boolean> = {};
+  for (const etf of neededSectorEtfs) {
+    const sBars = sectorBarMap[etf] ?? [];
+    if (sBars.length >= 20) {
+      const ma20 = sBars.slice(-20).reduce((s, b) => s + b.close, 0) / 20;
+      sectorEtfAboveMA20Map[etf] = sBars[sBars.length - 1].close > ma20;
+    } else {
+      sectorEtfAboveMA20Map[etf] = true; // insufficient data — don't block
+    }
+  }
+
   const results = await Promise.all(
     watchlist.map(async ({ ticker, strategy }) => {
       const [quote, bars, news, finnhub] = await Promise.all([
@@ -54,7 +66,8 @@ export async function GET() {
       if (!quote || bars.length === 0) return null;
       const sectorEtf = SECTOR_ETF[ticker];
       const sectorBars = sectorEtf ? (sectorBarMap[sectorEtf] ?? []) : [];
-      const signal = buildSignal(ticker, strategy, bars, quote.high52w, spyBars, sectorBars);
+      const sectorEtfAboveMA20 = sectorEtf ? (sectorEtfAboveMA20Map[sectorEtf] ?? true) : true;
+      const signal = buildSignal(ticker, strategy, bars, quote.high52w, spyBars, sectorBars, sectorEtfAboveMA20);
 
       const earningsDays = quote.earningsTimestamp
         ? Math.ceil((quote.earningsTimestamp.getTime() - Date.now()) / 86400000)

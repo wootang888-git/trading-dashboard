@@ -12,8 +12,17 @@ import { RefreshCw, BookOpen } from "lucide-react";
 import { MlScore, MlPerformanceRow } from "@/lib/supabase";
 
 const REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes
-const TRADE_THRESHOLD = 82;  // Gate 1: pull the trigger
-const WATCH_THRESHOLD = 70;  // Gate 2: set an alert
+const TRADE_THRESHOLD = 82;  // legacy: still used for cross-threshold notifications
+
+type SignalTier = "HIGH_CONVICTION" | "TACTICAL_BUY" | "WATCH_EXTENDED" | "OBSERVE" | "EXIT";
+
+interface HardGates {
+  rsiOverheated: boolean;
+  bbExtended: boolean;
+  targetBlocked: boolean;
+  sectorWeak: boolean;
+  volPriceUnconfirmed: boolean;
+}
 
 interface ValidationResult {
   passed: boolean;
@@ -86,6 +95,14 @@ interface SignalData {
   // Conviction history (populated after Phase D)
   convictionTrend?: "rising" | "stable" | "falling" | null;
   convictionStreak?: number | null;
+  // Phase 1: tier + hard gates
+  tier: SignalTier;
+  hardGates: HardGates;
+  volPriceConfirmed: boolean;
+  sectorEtfAboveMA20: boolean;
+  rsiAtEntry: number;
+  bbPct: number;
+  rsVsSpyNegativeStreak: number;
 }
 
 interface DashboardData {
@@ -281,9 +298,14 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
     return () => clearInterval(tick);
   }, []);
 
-  const trade = data.signals.filter((s) => s.convictionScore >= TRADE_THRESHOLD);
-  const watch = data.signals.filter((s) => s.convictionScore >= WATCH_THRESHOLD && s.convictionScore < TRADE_THRESHOLD);
-  const observe = data.signals.filter((s) => s.convictionScore < WATCH_THRESHOLD);
+  const highConviction = data.signals.filter((s) => s.tier === "HIGH_CONVICTION");
+  const tacticalBuy = data.signals.filter((s) => s.tier === "TACTICAL_BUY");
+  const watchExtended = data.signals.filter((s) => s.tier === "WATCH_EXTENDED");
+  const observe = data.signals.filter((s) => s.tier === "OBSERVE");
+  const exitTier = data.signals.filter((s) => s.tier === "EXIT");
+  // Aliases for legacy stats-pill labels
+  const trade = highConviction;
+  const watch = tacticalBuy;
 
   const updatedTime = new Date(data.updatedAt).toLocaleTimeString("en-US", {
     hour: "numeric",
@@ -404,45 +426,88 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
         </div>
       </div>
 
-      {/* Trade signals (≥82) */}
-      {trade.length > 0 && (
+      {/* High Conviction (>82, all hard gates pass) */}
+      {highConviction.length > 0 && (
         <section>
-          <h2 className="text-sm font-semibold uppercase tracking-widest mb-3" style={sectionHead("#43ed9e")}>
-            Trade — High Conviction ({trade.length})
-          </h2>
-          <div className="space-y-3">
-            {trade.map((s) => (
-              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Watch signals (70–81) — alert when they cross 82 */}
-      {watch.length > 0 && (
-        <section>
-          <h2 className="text-sm font-semibold uppercase tracking-widest mb-1" style={sectionHead("#c8a84b")}>
-            Watch — Alert at {TRADE_THRESHOLD} ({watch.length})
+          <h2 className="text-sm font-semibold uppercase tracking-widest mb-1" style={sectionHead("#43ed9e")}>
+            HIGH CONVICTION ({highConviction.length})
           </h2>
           <p className="text-[10px] mb-3" style={{ color: "var(--on-surface-variant)" }}>
-            Browser notification fires automatically when any of these cross {TRADE_THRESHOLD}.
+            All quality gates passed — clear to enter
           </p>
           <div className="space-y-3">
-            {watch.map((s) => (
+            {highConviction.map((s) => (
               <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} />
             ))}
           </div>
         </section>
       )}
 
-      {/* Observe (<70) */}
+      {/* Tactical Buy (70–81, or >82 with one failed gate) */}
+      {tacticalBuy.length > 0 && (
+        <section>
+          <h2 className="text-sm font-semibold uppercase tracking-widest mb-1" style={sectionHead("#adc6ff")}>
+            TACTICAL BUY ({tacticalBuy.length})
+          </h2>
+          <p className="text-[10px] mb-1" style={{ color: "var(--on-surface-variant)" }}>
+            Strong setup with minor friction — standard position
+          </p>
+          <p className="text-[10px] mb-3" style={{ color: "var(--on-surface-variant)" }}>
+            Browser notification fires automatically when any of these qualify as High Conviction.
+          </p>
+          <div className="space-y-3">
+            {tacticalBuy.map((s) => (
+              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Watch Extended — RSI overheated or BB extended */}
+      {watchExtended.length > 0 && (
+        <section>
+          <h2 className="text-sm font-semibold uppercase tracking-widest mb-1" style={sectionHead("#ffb33c")}>
+            WATCH — EXTENDED ({watchExtended.length})
+          </h2>
+          <p className="text-[10px] mb-3" style={{ color: "var(--on-surface-variant)" }}>
+            Overheated entry — wait for pullback to 8-EMA
+          </p>
+          <div className="space-y-3">
+            {watchExtended.map((s) => (
+              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Observe */}
       {observe.length > 0 && (
         <section>
-          <h2 className="text-sm font-semibold uppercase tracking-widest mb-3" style={sectionHead("var(--on-surface-variant)")}>
-            Observe ({observe.length})
+          <h2 className="text-sm font-semibold uppercase tracking-widest mb-1" style={sectionHead("#c8a84b")}>
+            OBSERVE ({observe.length})
           </h2>
+          <p className="text-[10px] mb-3" style={{ color: "var(--on-surface-variant)" }}>
+            Weakening thesis — hold, do not add
+          </p>
           <div className="space-y-3">
             {observe.map((s) => (
+              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Exit — failed thesis */}
+      {exitTier.length > 0 && (
+        <section>
+          <h2 className="text-sm font-semibold uppercase tracking-widest mb-1" style={sectionHead("#ffb3ae")}>
+            EXIT SIGNAL ({exitTier.length})
+          </h2>
+          <p className="text-[10px] mb-3" style={{ color: "var(--on-surface-variant)" }}>
+            Thesis failed — reduce or close position
+          </p>
+          <div className="space-y-3">
+            {exitTier.map((s) => (
               <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} />
             ))}
           </div>
