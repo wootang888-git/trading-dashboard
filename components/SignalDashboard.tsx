@@ -421,13 +421,6 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
         <span>Updated {updatedTime} · refreshes in {Math.floor(countdown / 60)}:{String(countdown % 60).padStart(2, "0")}</span>
         <div className="flex items-center gap-3">
           <button
-            onClick={() => openCalc()}
-            className="text-xs px-2 py-1 rounded transition-colors hover:brightness-125"
-            style={{ backgroundColor: "var(--surface-high)", color: "var(--on-surface-variant)" }}
-          >
-            Calculator
-          </button>
-          <button
             onClick={refresh}
             disabled={loading}
             className="flex items-center gap-1.5 transition-colors disabled:opacity-50 hover:brightness-125"

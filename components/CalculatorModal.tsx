@@ -12,11 +12,23 @@ interface CalculatorModalProps {
 }
 
 export default function CalculatorModal({ entry: initialEntry, stop: initialStop, ticker, garchVol, onClose }: CalculatorModalProps) {
+  const ACCOUNT_SIZE_KEY = "swingai_account_size";
+  const RISK_PCT_KEY = "swingai_risk_pct";
+
   const [minimized, setMinimized] = useState(false);
   const [account, setAccount] = useState("10000");
   const [riskPct, setRiskPct] = useState("2");
   const [entry, setEntry] = useState(initialEntry ? String(initialEntry) : "");
   const [stop, setStop] = useState(initialStop ? String(initialStop) : "");
+
+  // Load shared account size + risk % from localStorage on mount
+  useEffect(() => {
+    const storedSize = localStorage.getItem(ACCOUNT_SIZE_KEY);
+    if (storedSize) setAccount(storedSize); // eslint-disable-line react-hooks/set-state-in-effect
+    const storedRisk = localStorage.getItem(RISK_PCT_KEY);
+    if (storedRisk) setRiskPct(storedRisk); // eslint-disable-line react-hooks/set-state-in-effect
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Update fields when pre-fill values change (e.g. clicking Size on a different card)
   useEffect(() => {
@@ -113,12 +125,12 @@ export default function CalculatorModal({ entry: initialEntry, stop: initialStop
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="text-xs mb-1 block" style={labelStyle}>Account ($)</label>
-              <input type="number" value={account} onChange={(e) => setAccount(e.target.value)}
+              <input type="number" value={account} onChange={(e) => { setAccount(e.target.value); localStorage.setItem(ACCOUNT_SIZE_KEY, e.target.value); }}
                 className={inputCls} style={inputStyle} min="1" placeholder="10000" />
             </div>
             <div>
               <label className="text-xs mb-1 block" style={labelStyle}>Risk (%)</label>
-              <input type="number" value={riskPct} onChange={(e) => setRiskPct(e.target.value)}
+              <input type="number" value={riskPct} onChange={(e) => { setRiskPct(e.target.value); localStorage.setItem(RISK_PCT_KEY, e.target.value); }}
                 className={inputCls} style={inputStyle} min="0.1" max="10" step="0.1" placeholder="2" />
             </div>
             <div>

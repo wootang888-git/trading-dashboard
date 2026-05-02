@@ -8,7 +8,6 @@ const tabs = [
   { href: "/journal", label: "Journal" },
   { href: "/watchlist", label: "Watchlist" },
   { href: "/backtest", label: "Backtest Simulation" },
-  { href: "/calculator", label: "Calculator" },
 ];
 
 export default function NavBar() {

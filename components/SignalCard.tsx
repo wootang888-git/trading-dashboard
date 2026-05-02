@@ -170,6 +170,45 @@ const GATE_LABELS: Record<keyof HardGates, string> = {
   volPriceUnconfirmed: "No vol-price confirmation",
 };
 
+const STRATEGY_TIPS: Record<string, string> = {
+  momentum: "Momentum breakout — stock breaking above 50-day resistance with volume surge.",
+  momentum_breakout: "Momentum breakout — stock breaking above 50-day resistance with volume surge.",
+  mean_reversion: "Mean reversion — oversold stock showing signs of bouncing back toward its moving average.",
+  ema_pullback: "EMA pullback — stock in uptrend that pulled back to its 8-day average before resuming.",
+  etf_rotation: "ETF rotation — sector leader confirmed by volume, strong relative strength.",
+};
+
+function StrategyLabel({ strategy }: { strategy: string }) {
+  const [tipOpen, setTipOpen] = useState(false);
+  const key = strategy.toLowerCase().replace(/ /g, "_");
+  const tip = STRATEGY_TIPS[key] ?? `${strategy.replace(/_/g, " ")} strategy.`;
+
+  return (
+    <div className="relative mt-0.5">
+      <button
+        className="text-[10px] text-[#bacbbd]/60 uppercase tracking-wider hover:text-[#bacbbd] transition-colors"
+        onClick={(e) => { e.stopPropagation(); setTipOpen((v) => !v); }}
+      >
+        {strategy.replace(/_/g, " ")}
+      </button>
+      {tipOpen && (
+        <div
+          className="absolute top-full left-0 mt-1.5 w-64 rounded-xl bg-[#0e141a] border border-[#3c4a40]/40 px-3 py-2.5 text-[11px] text-[#bacbbd] leading-relaxed z-50 shadow-2xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {tip}
+          <button
+            className="block mt-1.5 text-[10px] text-[#bacbbd]/40 hover:text-[#bacbbd]/60"
+            onClick={(e) => { e.stopPropagation(); setTipOpen(false); }}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SignalCard({
   ticker, strength, price, changePct,
   convictionScore, convictionBand, sectorRs, validation,
@@ -186,7 +225,7 @@ export default function SignalCard({
 }: SignalCardProps) {
   const [modalOpen, setModalOpen] = useState(false);
   const [faqOpen, setFaqOpen] = useState(false);
-  const [faqMode, setFaqMode] = useState<"conviction" | "ml">("conviction");
+  const [faqMode, setFaqMode] = useState<"conviction" | "ml" | "trend">("conviction");
   const [showChart, setShowChart] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [showValidation, setShowValidation] = useState(false);
@@ -196,23 +235,31 @@ export default function SignalCard({
   const [closeLoading, setCloseLoading] = useState(false);
   const [closeError, setCloseError] = useState("");
 
-  // Phase 3: account-size coaching
+  // Phase 3: account-size + risk % coaching
   const ACCOUNT_SIZE_KEY = "swingai_account_size";
+  const RISK_PCT_KEY = "swingai_risk_pct";
   const DEFAULT_ACCOUNT_SIZE = 10000;
+  const DEFAULT_RISK_PCT = 2;
   const [accountSize, setAccountSize] = useState(DEFAULT_ACCOUNT_SIZE);
+  const [riskPct, setRiskPct] = useState(DEFAULT_RISK_PCT);
 
-  // Load account size from localStorage on mount
+  // Load account size + risk % from localStorage on mount
   useEffect(() => {
-    const stored = localStorage.getItem(ACCOUNT_SIZE_KEY);
-    if (stored) {
-      const n = parseInt(stored, 10);
+    const storedSize = localStorage.getItem(ACCOUNT_SIZE_KEY);
+    if (storedSize) {
+      const n = parseInt(storedSize, 10);
       if (n >= 50 && n <= 500000) setAccountSize(n);
+    }
+    const storedRisk = localStorage.getItem(RISK_PCT_KEY);
+    if (storedRisk) {
+      const r = parseFloat(storedRisk);
+      if (r >= 0.5 && r <= 5) setRiskPct(r);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Compute recommended shares: GARCH if available, else 2% ATR rule; TB gets 50% haircut
-  const riskBudget = accountSize * 0.02;
+  // Compute recommended shares: GARCH if available, else risk-rule; TB gets 50% haircut
+  const riskBudget = accountSize * (riskPct / 100);
   const isTactical = tier === "TACTICAL_BUY";
   const recommendedShares = (() => {
     let shares: number;
@@ -452,16 +499,22 @@ export default function SignalCard({
                   ML {mlScore}%{mlRank != null && <span className="text-[#6b7280] ml-1">#{mlRank}</span>}
                 </span>
               )}
-              {/* Conviction trend chips (D3 — populated after signal_history accumulates) */}
+              {/* Conviction trend chips — tappable to open FAQ trend explainer */}
               {convictionTrend === "rising" && convictionStreak != null && convictionStreak <= 3 && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded font-bold border bg-[#45dfa4]/10 text-[#45dfa4] border-[#45dfa4]/20">
+                <button
+                  className="text-[10px] px-1.5 py-0.5 rounded font-bold border bg-[#45dfa4]/10 text-[#45dfa4] border-[#45dfa4]/20 hover:bg-[#45dfa4]/20 transition-colors cursor-pointer"
+                  onClick={(e) => { e.stopPropagation(); setFaqMode("trend"); setFaqOpen(true); }}
+                >
                   ↑ Momentum Building
-                </span>
+                </button>
               )}
               {convictionTrend === "falling" && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded font-bold border bg-[#ffb3ae]/10 text-[#ffb3ae] border-[#ffb3ae]/20">
+                <button
+                  className="text-[10px] px-1.5 py-0.5 rounded font-bold border bg-[#ffb3ae]/10 text-[#ffb3ae] border-[#ffb3ae]/20 hover:bg-[#ffb3ae]/20 transition-colors cursor-pointer"
+                  onClick={(e) => { e.stopPropagation(); setFaqMode("trend"); setFaqOpen(true); }}
+                >
                   ↓ Thesis Weakening
-                </span>
+                </button>
               )}
               {/* Conviction Streak — High Conviction held N consecutive days */}
               {tier === "HIGH_CONVICTION" && convictionStreak != null && convictionStreak >= 3 && (
@@ -473,9 +526,7 @@ export default function SignalCard({
                 </span>
               )}
             </div>
-            <p className="text-[10px] text-[#bacbbd] mt-0.5 uppercase tracking-wider">
-              {strategy.replace(/_/g, " ")}
-            </p>
+            <StrategyLabel strategy={strategy} />
           </div>
 
 
@@ -851,43 +902,71 @@ export default function SignalCard({
                     style={{ backgroundColor: `${tColor}10`, color: tColor }}
                   >
                     {tier === "HIGH_CONVICTION"
-                      ? `Full position. All quality gates cleared. You're risking 2% of your account ($${(riskBudget).toLocaleString("en-US", { maximumFractionDigits: 0 })}) — if the stop hits, that's your maximum loss.`
-                      : `Half position recommended. One quality gate is still failing. You're risking 1% of your account ($${(riskBudget / 2).toLocaleString("en-US", { maximumFractionDigits: 0 })}) until the setup fully clears. You can add to the position if it upgrades to High Conviction.`
+                      ? `Full position. All quality gates cleared. You're risking ${riskPct}% of your account ($${riskBudget.toLocaleString("en-US", { maximumFractionDigits: 0 })}) — if the stop hits, that's your maximum loss.`
+                      : `Half position recommended. One quality gate is still failing. You're risking ${(riskPct / 2).toFixed(1)}% of your account ($${(riskBudget / 2).toLocaleString("en-US", { maximumFractionDigits: 0 })}) until the setup fully clears. You can add to the position if it upgrades to High Conviction.`
                     }
                   </div>
                 )}
 
-                {/* Account size + shares row */}
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div>
-                    <label className="text-[#bacbbd]/60 block mb-1">Account size ($)</label>
-                    <input
-                      type="number"
-                      min="50"
-                      max="500000"
-                      step="1000"
-                      value={accountSize}
-                      onChange={(e) => {
-                        const val = Math.min(500000, Math.max(50, parseInt(e.target.value) || 50));
-                        setAccountSize(val);
-                        localStorage.setItem(ACCOUNT_SIZE_KEY, String(val));
-                        // Recompute shares when account size changes
-                        const risk = entryPrice > 0 && stopPrice > 0 ? Math.abs(entryPrice - stopPrice) : null;
-                        let sh: number;
-                        if (garchVol && garchVol > 0 && entryPrice > 0) {
-                          sh = (val * 0.02) / (entryPrice * (garchVol / 100) * 2);
-                        } else if (risk && risk > 0) {
-                          sh = (val * 0.02) / risk;
-                        } else { return; }
-                        if (isTactical) sh = sh * 0.5;
-                        setLogShares(String(Math.max(1, Math.floor(sh))));
-                      }}
-                      className="w-full rounded px-2 py-1.5 bg-[#252b31] text-[#dde3ec] border border-[#3c4a40]/30 focus:outline-none focus:border-[#43ed9e]/40 text-xs"
-                    />
+                {/* Account size + risk % + shares row */}
+                <div className="space-y-2 text-xs">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[#bacbbd]/60 block mb-1">Account ($)</label>
+                      <input
+                        type="number"
+                        min="50"
+                        max="500000"
+                        step="1000"
+                        value={accountSize}
+                        onChange={(e) => {
+                          const val = Math.min(500000, Math.max(50, parseInt(e.target.value) || 50));
+                          setAccountSize(val);
+                          localStorage.setItem(ACCOUNT_SIZE_KEY, String(val));
+                          const budget = val * (riskPct / 100);
+                          const stopRisk = entryPrice > 0 && stopPrice > 0 ? Math.abs(entryPrice - stopPrice) : null;
+                          let sh: number;
+                          if (garchVol && garchVol > 0 && entryPrice > 0) {
+                            sh = budget / (entryPrice * (garchVol / 100) * 2);
+                          } else if (stopRisk && stopRisk > 0) {
+                            sh = budget / stopRisk;
+                          } else { return; }
+                          if (isTactical) sh = sh * 0.5;
+                          setLogShares(String(Math.max(1, Math.floor(sh))));
+                        }}
+                        className="w-full rounded px-2 py-1.5 bg-[#252b31] text-[#dde3ec] border border-[#3c4a40]/30 focus:outline-none focus:border-[#43ed9e]/40 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[#bacbbd]/60 block mb-1">Risk (%)</label>
+                      <input
+                        type="number"
+                        min="0.5"
+                        max="5"
+                        step="0.5"
+                        value={riskPct}
+                        onChange={(e) => {
+                          const val = Math.min(5, Math.max(0.5, parseFloat(e.target.value) || 0.5));
+                          setRiskPct(val);
+                          localStorage.setItem(RISK_PCT_KEY, String(val));
+                          const budget = accountSize * (val / 100);
+                          const stopRisk = entryPrice > 0 && stopPrice > 0 ? Math.abs(entryPrice - stopPrice) : null;
+                          let sh: number;
+                          if (garchVol && garchVol > 0 && entryPrice > 0) {
+                            sh = budget / (entryPrice * (garchVol / 100) * 2);
+                          } else if (stopRisk && stopRisk > 0) {
+                            sh = budget / stopRisk;
+                          } else { return; }
+                          if (isTactical) sh = sh * 0.5;
+                          setLogShares(String(Math.max(1, Math.floor(sh))));
+                        }}
+                        className="w-full rounded px-2 py-1.5 bg-[#252b31] text-[#dde3ec] border border-[#3c4a40]/30 focus:outline-none focus:border-[#43ed9e]/40 text-xs"
+                      />
+                    </div>
                   </div>
                   <div>
                     <label className="text-[#bacbbd]/60 block mb-1">
-                      Shares {garchVol ? "(GARCH sized)" : "(2% risk rule)"}
+                      Shares {garchVol ? "(GARCH sized)" : `(${riskPct}% risk rule)`}
                       {isTactical && <span className="ml-1 text-[#adc6ff]">½ pos</span>}
                     </label>
                     <input
@@ -1011,7 +1090,7 @@ export default function SignalCard({
         />
       )}
 
-      <FAQModal open={faqOpen} onClose={() => { setFaqOpen(false); setFaqMode("conviction"); }} mode={faqMode} mlScore={mlScore} mlRank={mlRank} />
+      <FAQModal open={faqOpen} onClose={() => { setFaqOpen(false); setFaqMode("conviction"); }} mode={faqMode} mlScore={mlScore} mlRank={mlRank} convictionTrend={convictionTrend} />
     </>
   );
 }

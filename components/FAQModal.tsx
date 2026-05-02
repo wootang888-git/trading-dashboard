@@ -6,9 +6,10 @@ import { X } from "lucide-react";
 interface FAQModalProps {
   open: boolean;
   onClose: () => void;
-  mode?: "conviction" | "ml";
+  mode?: "conviction" | "ml" | "trend";
   mlScore?: number | null;
   mlRank?: number | null;
+  convictionTrend?: "rising" | "stable" | "falling" | null;
 }
 
 function MlScoreContent({ mlScore, mlRank }: { mlScore?: number | null; mlRank?: number | null }) {
@@ -126,7 +127,110 @@ function MlScoreContent({ mlScore, mlRank }: { mlScore?: number | null; mlRank?:
   );
 }
 
-export default function FAQModal({ open, onClose, mode = "conviction", mlScore, mlRank }: FAQModalProps) {
+function TrendContent({ convictionTrend }: { convictionTrend?: "rising" | "stable" | "falling" | null }) {
+  const isRising = convictionTrend === "rising";
+  const isFalling = convictionTrend === "falling";
+  const badgeColor = isRising ? "#45dfa4" : isFalling ? "#ffb3ae" : "#bacbbd";
+  const badgeLabel = isRising ? "↑ Momentum Building" : isFalling ? "↓ Thesis Weakening" : "Conviction Trend";
+
+  return (
+    <div className="space-y-6 text-[#bacbbd]">
+
+      {/* Badge callout */}
+      <div
+        className="rounded-xl p-4 border border-white/5"
+        style={{ backgroundColor: `${badgeColor}12` }}
+      >
+        <p className="text-[13px] font-bold mb-1" style={{ color: badgeColor }}>{badgeLabel}</p>
+        <p className="text-[14px] leading-relaxed" style={{ color: `${badgeColor}CC` }}>
+          {isRising
+            ? "This stock's conviction score has been rising over the last 1–3 sessions. The setup is improving."
+            : isFalling
+            ? "This stock's conviction score has been falling over the last 1–3 sessions. The thesis is weakening."
+            : "This stock's conviction score has been stable over the last 1–3 sessions."
+          }
+        </p>
+      </div>
+
+      {/* What it means */}
+      <section>
+        <h3 className="text-[12px] font-bold uppercase tracking-widest text-[#bacbbd]/50 mb-3">
+          What is the Conviction Trend?
+        </h3>
+        <p className="text-[14px] leading-relaxed text-[#bacbbd]/80 mb-3">
+          SwingAI tracks each stock's conviction score every trading day and notes the direction it's moving. A <span className="text-[#45dfa4] font-medium">rising trend</span> means more quality checks are passing each day. A <span className="text-[#ffb3ae] font-medium">falling trend</span> means conditions are deteriorating.
+        </p>
+        <p className="text-[14px] leading-relaxed text-[#bacbbd]/80">
+          The trend badge appears after <span className="text-[#dde3ec] font-medium">1–3 consecutive sessions</span> in the same direction. Once a streak reaches 4+ days the badge is hidden — a long streak is already reflected in the tier itself.
+        </p>
+      </section>
+
+      <div className="border-t border-[#3c4a40]/20" />
+
+      {/* Observe + rising: the critical nuance */}
+      {isRising && (
+        <>
+          <section>
+            <h3 className="text-[12px] font-bold uppercase tracking-widest text-[#bacbbd]/50 mb-3">
+              Improving but not yet actionable
+            </h3>
+            <div className="rounded-lg bg-[#c8a84b]/10 border border-[#c8a84b]/20 p-3 mb-3">
+              <p className="text-[13px] font-bold text-[#c8a84b] mb-1">If the tier shows OBSERVE</p>
+              <p className="text-[14px] leading-relaxed text-[#bacbbd]/80">
+                The score is heading in the right direction, but it has <span className="text-[#dde3ec] font-medium">not yet crossed the quality threshold</span> needed to enter a position. Do not buy yet. This is a stock to watch — check back each morning to see if it upgrades to Tactical Buy or High Conviction.
+              </p>
+            </div>
+            <div className="rounded-lg bg-[#adc6ff]/10 border border-[#adc6ff]/20 p-3">
+              <p className="text-[13px] font-bold text-[#adc6ff] mb-1">If the tier shows TACTICAL BUY or HIGH CONVICTION</p>
+              <p className="text-[14px] leading-relaxed text-[#bacbbd]/80">
+                Rising momentum <span className="text-[#dde3ec] font-medium">confirms the setup</span>. The stock is both actionable and improving — a stronger signal than a static score alone.
+              </p>
+            </div>
+          </section>
+          <div className="border-t border-[#3c4a40]/20" />
+        </>
+      )}
+
+      {/* Falling: what to do */}
+      {isFalling && (
+        <>
+          <section>
+            <h3 className="text-[12px] font-bold uppercase tracking-widest text-[#bacbbd]/50 mb-3">
+              What to do when the thesis weakens
+            </h3>
+            <div className="space-y-2">
+              {[
+                { icon: "📋", title: "Holding a position?", desc: "Review your stop loss. A falling conviction trend often precedes an Exit signal. Make sure your stop is within your risk tolerance before the next session." },
+                { icon: "👀", title: "Watching but not yet in?", desc: "Wait. A weakening trend means conditions are moving against the setup. There is no urgency to enter — let the signal stabilize or improve before acting." },
+                { icon: "🔄", title: "Already exited?", desc: "Good discipline. Monitor over the next few sessions. If the trend reverses to rising, the setup may rebuild and re-qualify." },
+              ].map(({ icon, title, desc }) => (
+                <div key={title} className="flex items-start gap-3">
+                  <span className="text-lg shrink-0 mt-0.5">{icon}</span>
+                  <div>
+                    <p className="text-[14px] font-medium text-[#dde3ec]">{title}</p>
+                    <p className="text-[12px] text-[#bacbbd]/60 mt-0.5 leading-relaxed">{desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+          <div className="border-t border-[#3c4a40]/20" />
+        </>
+      )}
+
+      {/* Important reminder */}
+      <div className="rounded-lg bg-orange-900/10 border border-orange-800/20 p-3">
+        <p className="text-[12px] text-orange-300/80 leading-relaxed">
+          ⚠ The conviction trend shows <span className="font-medium">direction of travel</span>, not a standalone buy or sell signal. Always confirm with the tier and hard gate status before acting.
+        </p>
+      </div>
+
+      <div className="pb-safe" />
+    </div>
+  );
+}
+
+export default function FAQModal({ open, onClose, mode = "conviction", mlScore, mlRank, convictionTrend }: FAQModalProps) {
   // Close on Escape key
   useEffect(() => {
     if (!open) return;
@@ -165,7 +269,7 @@ export default function FAQModal({ open, onClose, mode = "conviction", mlScore, 
         {/* Header */}
         <div className="sticky top-0 bg-[#0e141a] flex items-center justify-between px-5 py-4 border-b border-[#3c4a40]/20 z-10">
           <p className="text-[16px] md:text-[18px] font-bold text-[#dde3ec] font-['Space_Grotesk']">
-            {mode === "ml" ? "Understanding Your ML Score" : "How SwingAI Scores Signals"}
+            {mode === "ml" ? "Understanding Your ML Score" : mode === "trend" ? "Understanding Conviction Trend" : "How SwingAI Scores Signals"}
           </p>
           <button
             onClick={onClose}
@@ -177,7 +281,7 @@ export default function FAQModal({ open, onClose, mode = "conviction", mlScore, 
 
         {/* Content */}
         <div className="pl-5 pr-7 py-5 md:px-5 space-y-6 text-[#bacbbd]">
-        {mode === "ml" ? <MlScoreContent mlScore={mlScore} mlRank={mlRank} /> : <>
+        {mode === "ml" ? <MlScoreContent mlScore={mlScore} mlRank={mlRank} /> : mode === "trend" ? <TrendContent convictionTrend={convictionTrend} /> : <>
 
           {/* Conviction Score */}
           <section>
