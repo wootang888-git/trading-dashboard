@@ -157,6 +157,9 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
   const [countdown, setCountdown] = useState(REFRESH_INTERVAL / 1000);
   const [calc, setCalc] = useState<CalcState>({ open: false, entry: null, stop: null });
   const [openPositions, setOpenPositions] = useState<OpenPositionSummary | null>(null);
+  // ticker → { ids: trade IDs[], count }
+  const [positionData, setPositionData] = useState<Map<string, { ids: string[]; count: number }>>(new Map());
+
 
   // Track previous conviction scores to detect Watch→Trade crossings
   const prevScores = useRef<Map<string, number>>(
@@ -169,42 +172,50 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
 
   useNotificationPermission();
 
-  // Fetch open positions summary for morning brief
-  useEffect(() => {
-    async function loadPositions() {
-      try {
-        const [tradesRes, pricesRes] = await Promise.all([
-          fetch("/api/trades"),
-          Promise.resolve(null), // prices fetched after we know tickers
-        ]);
-        void pricesRes;
-        if (!tradesRes.ok) return;
-        const { trades } = await tradesRes.json();
-        const openTrades = (trades as Array<{ ticker: string; entry_price: number; stop_price: number | null; exit_date: string | null }>)
-          .filter((t) => !t.exit_date);
-        if (openTrades.length === 0) { setOpenPositions({ count: 0, nearStop: [] }); return; }
+  // Fetch open trades — drives morning brief AND "In Position" ribbons on cards
+  const loadPositions = useCallback(async () => {
+    try {
+      const tradesRes = await fetch("/api/trades");
+      if (!tradesRes.ok) return;
+      const { trades } = await tradesRes.json();
+      const openTrades = (trades as Array<{ ticker: string; entry_price: number; stop_price: number | null; exit_date: string | null }>)
+        .filter((t) => !t.exit_date);
 
-        const tickers = [...new Set(openTrades.map((t) => t.ticker))].join(",");
-        const priceRes = await fetch(`/api/current-prices?tickers=${tickers}`);
-        if (!priceRes.ok) { setOpenPositions({ count: openTrades.length, nearStop: [] }); return; }
-        const prices: Record<string, { price: number; prevClose: number; open: number } | null> = await priceRes.json();
+      // Derive "In Position" map: ticker → { ids, count }
+      const pdMap = new Map<string, { ids: string[]; count: number }>();
+      for (const t of openTrades as Array<{ id: string; ticker: string; entry_price: number; stop_price: number | null; exit_date: string | null }>) {
+        const entry = pdMap.get(t.ticker) ?? { ids: [], count: 0 };
+        entry.ids.push(t.id);
+        entry.count += 1;
+        pdMap.set(t.ticker, entry);
+      }
+      setPositionData(pdMap);
 
-        const nearStop = openTrades
-          .filter((t) => {
-            const live = prices[t.ticker]?.price;
-            if (!live || !t.stop_price) return false;
-            const riskDist = t.entry_price - t.stop_price;
-            return riskDist > 0 && ((live - t.stop_price) / riskDist) * 100 < 5;
-          })
-          .map((t) => t.ticker);
+      if (openTrades.length === 0) { setOpenPositions({ count: 0, nearStop: [] }); return; }
+
+      const tickers = [...new Set(openTrades.map((t) => t.ticker))].join(",");
+      const priceRes = await fetch(`/api/current-prices?tickers=${tickers}`);
+      if (!priceRes.ok) { setOpenPositions({ count: openTrades.length, nearStop: [] }); return; }
+      const prices: Record<string, { price: number; prevClose: number; open: number } | null> = await priceRes.json();
+
+      const nearStop = openTrades
+        .filter((t) => {
+          const live = prices[t.ticker]?.price;
+          if (!live || !t.stop_price) return false;
+          const riskDist = t.entry_price - t.stop_price;
+          return riskDist > 0 && ((live - t.stop_price) / riskDist) * 100 < 5;
+        })
+        .map((t) => t.ticker);
 
         // Store for Sprint D refresh-loop alerts
         openTradesRef.current = openTrades;
         setOpenPositions({ count: openTrades.length, nearStop });
       } catch { /* silent — morning brief is non-critical */ }
-    }
-    loadPositions();
   }, []);
+
+  useEffect(() => {
+    loadPositions();
+  }, [loadPositions]);
 
   const openCalc = useCallback((entry?: number | null, stop?: number | null, ticker?: string, garchVol?: number | null) => {
     setCalc({ open: true, entry: entry ?? null, stop: stop ?? null, ticker, garchVol });
@@ -284,7 +295,9 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
       setLoading(false);
       setCountdown(REFRESH_INTERVAL / 1000);
     }
-  }, []);
+    // Option 1: keep position ribbons in sync after every signal refresh
+    loadPositions();
+  }, [loadPositions]);
 
   useEffect(() => {
     const interval = setInterval(refresh, REFRESH_INTERVAL);
@@ -437,7 +450,7 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
           </p>
           <div className="space-y-3">
             {highConviction.map((s) => (
-              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} />
+              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} inPosition={positionData.has(s.ticker)} openTradeCount={positionData.get(s.ticker)?.count ?? 0} openTradeId={positionData.get(s.ticker)?.count === 1 ? positionData.get(s.ticker)?.ids[0] : undefined} onTradeLogged={loadPositions} />
             ))}
           </div>
         </section>
@@ -457,7 +470,7 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
           </p>
           <div className="space-y-3">
             {tacticalBuy.map((s) => (
-              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} />
+              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} inPosition={positionData.has(s.ticker)} openTradeCount={positionData.get(s.ticker)?.count ?? 0} openTradeId={positionData.get(s.ticker)?.count === 1 ? positionData.get(s.ticker)?.ids[0] : undefined} onTradeLogged={loadPositions} />
             ))}
           </div>
         </section>
@@ -491,7 +504,7 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
           </p>
           <div className="space-y-3">
             {observe.map((s) => (
-              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} />
+              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} inPosition={positionData.has(s.ticker)} openTradeCount={positionData.get(s.ticker)?.count ?? 0} openTradeId={positionData.get(s.ticker)?.count === 1 ? positionData.get(s.ticker)?.ids[0] : undefined} onTradeLogged={loadPositions} />
             ))}
           </div>
         </section>
@@ -508,7 +521,7 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
           </p>
           <div className="space-y-3">
             {exitTier.map((s) => (
-              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} />
+              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} inPosition={positionData.has(s.ticker)} openTradeCount={positionData.get(s.ticker)?.count ?? 0} openTradeId={positionData.get(s.ticker)?.count === 1 ? positionData.get(s.ticker)?.ids[0] : undefined} onTradeLogged={loadPositions} />
             ))}
           </div>
         </section>

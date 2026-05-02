@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Plus, Trash2, AlertCircle, ChevronDown, ChevronUp, TrendingUp, TrendingDown, RefreshCw } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -150,6 +151,17 @@ function PerformanceSummary({ closed }: { closed: Trade[] }) {
 
 export default function JournalManager({ initial }: { initial: Trade[] }) {
   const [trades, setTrades] = useState<Trade[]>(initial);
+  const searchParams = useSearchParams();
+  const focusTicker = searchParams.get("ticker")?.toUpperCase() ?? null;
+  const scrolledRef = useRef(false);
+
+  // Scroll to anchored ticker on first render (from signal card ribbon link)
+  useEffect(() => {
+    if (!focusTicker || scrolledRef.current) return;
+    scrolledRef.current = true;
+    const el = document.getElementById(`trade-${focusTicker}`);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [focusTicker, trades]);
 
   // Add form state
   const [ticker, setTicker] = useState("");
@@ -407,7 +419,11 @@ export default function JournalManager({ initial }: { initial: Trade[] }) {
                 Live
               </button>
             </div>
-            {open.map((trade) => {
+            {(() => {
+              const seenTickers = new Set<string>();
+              return open.map((trade) => {
+              const isFirstForTicker = !seenTickers.has(trade.ticker);
+              seenTickers.add(trade.ticker);
               const days = daysBetween(trade.entry_date, today());
               const isClosing = closingId === trade.id;
               const liveData = livePrices[trade.ticker] ?? null;
@@ -446,7 +462,12 @@ export default function JournalManager({ initial }: { initial: Trade[] }) {
               }
 
               return (
-                <Card key={trade.id} className="border-0" style={{ backgroundColor: "var(--surface-container)" }}>
+                <Card
+                  key={trade.id}
+                  id={isFirstForTicker ? `trade-${trade.ticker}` : undefined}
+                  className={`border-0 transition-all duration-500 ${isFirstForTicker && focusTicker === trade.ticker ? "ring-1 ring-[#43ed9e]/40" : ""}`}
+                  style={{ backgroundColor: "var(--surface-container)" }}
+                >
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
@@ -588,7 +609,8 @@ export default function JournalManager({ initial }: { initial: Trade[] }) {
                   </CardContent>
                 </Card>
               );
-            })}
+              });
+            })()}
           </div>
         )}
 

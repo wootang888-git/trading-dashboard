@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ChevronDown, ChevronUp, BookOpen, Check, AlertCircle } from "lucide-react";
 import SAModal from "./SAModal";
 import StockChart from "./StockChart";
@@ -84,6 +84,11 @@ interface SignalCardProps {
   rsiAtEntry?: number;
   rsVsSpyNegativeStreak?: number;
   ema8?: number;
+  // Phase 3: position tracking
+  inPosition?: boolean;
+  openTradeCount?: number;
+  openTradeId?: string;        // populated only when openTradeCount === 1
+  onTradeLogged?: () => void;
 }
 
 // Metric tile — hover on desktop, tap on mobile. Only one tooltip open at a time.
@@ -177,6 +182,7 @@ export default function SignalCard({
   convictionTrend, convictionStreak,
   prevClose, open,
   tier, hardGates, ema8,
+  inPosition, openTradeCount = 0, openTradeId, onTradeLogged,
 }: SignalCardProps) {
   const [modalOpen, setModalOpen] = useState(false);
   const [faqOpen, setFaqOpen] = useState(false);
@@ -185,6 +191,42 @@ export default function SignalCard({
   const [expanded, setExpanded] = useState(false);
   const [showValidation, setShowValidation] = useState(false);
   const [activeTip, setActiveTip] = useState<string | null>(null);
+
+  // Phase 3: close-position state (for Mark Closed button)
+  const [closeLoading, setCloseLoading] = useState(false);
+  const [closeError, setCloseError] = useState("");
+
+  // Phase 3: account-size coaching
+  const ACCOUNT_SIZE_KEY = "swingai_account_size";
+  const DEFAULT_ACCOUNT_SIZE = 10000;
+  const [accountSize, setAccountSize] = useState(DEFAULT_ACCOUNT_SIZE);
+
+  // Load account size from localStorage on mount
+  useEffect(() => {
+    const stored = localStorage.getItem(ACCOUNT_SIZE_KEY);
+    if (stored) {
+      const n = parseInt(stored, 10);
+      if (n >= 50 && n <= 500000) setAccountSize(n);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Compute recommended shares: GARCH if available, else 2% ATR rule; TB gets 50% haircut
+  const riskBudget = accountSize * 0.02;
+  const isTactical = tier === "TACTICAL_BUY";
+  const recommendedShares = (() => {
+    let shares: number;
+    const risk = entryPrice > 0 && stopPrice > 0 ? Math.abs(entryPrice - stopPrice) : null;
+    if (garchVol && garchVol > 0 && entryPrice > 0) {
+      shares = riskBudget / (entryPrice * (garchVol / 100) * 2);
+    } else if (risk && risk > 0) {
+      shares = riskBudget / risk;
+    } else {
+      return null;
+    }
+    if (isTactical) shares = shares * 0.5;
+    return Math.max(1, Math.floor(shares));
+  })();
 
   // Sprint C: One-click trade log
   const [logOpen, setLogOpen] = useState(false);
@@ -282,6 +324,81 @@ export default function SignalCard({
             : "bg-[#161c22] hover:bg-[#1a2027]"
         }`}
       >
+        {/* ── In Position ribbon ── */}
+        {inPosition && (
+          <div
+            className="px-5 py-1.5 flex items-center justify-between gap-2 text-[11px] font-semibold"
+            style={{ backgroundColor: `${tColor}18`, borderBottom: `1px solid ${tColor}30`, color: tColor }}
+          >
+            <a
+              href={`/journal?ticker=${ticker}`}
+              className="flex items-center gap-1.5 hover:brightness-125 transition-all underline-offset-2 hover:underline"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Check size={11} />
+              {openTradeCount > 1 ? `${openTradeCount} open positions — view in journal →` : "In Position — view in journal →"}
+            </a>
+
+            {/* Option 2: Exit/Observe tier action — close or navigate */}
+            {(tier === "EXIT" || tier === "OBSERVE") && (
+              openTradeCount === 1 && openTradeId ? (
+                <div className="flex items-center gap-2">
+                  {closeError && <span className="text-[9px] text-[#ffb3ae]">{closeError}</span>}
+                  <button
+                    disabled={closeLoading}
+                    className="text-[10px] px-2 py-0.5 rounded border font-semibold hover:brightness-125 transition-all disabled:opacity-50"
+                    style={{ borderColor: "rgba(255,179,174,0.4)", color: "#ffb3ae", backgroundColor: "rgba(255,179,174,0.08)" }}
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      setCloseLoading(true);
+                      setCloseError("");
+                      try {
+                        const res = await fetch(`/api/trades/${openTradeId}`, {
+                          method: "PATCH",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            exit_date: new Date().toISOString().split("T")[0],
+                            exit_price: price,
+                          }),
+                        });
+                        if (res.ok) {
+                          onTradeLogged?.();
+                        } else {
+                          setCloseError("Failed to close.");
+                        }
+                      } finally {
+                        setCloseLoading(false);
+                      }
+                    }}
+                  >
+                    {closeLoading ? "..." : "Mark Closed"}
+                  </button>
+                </div>
+              ) : openTradeCount > 1 ? (
+                <a
+                  href={`/journal?ticker=${ticker}`}
+                  className="text-[10px] underline-offset-2 hover:underline"
+                  style={{ color: "#adc6ff" }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  View in Journal →
+                </a>
+              ) : null
+            )}
+          </div>
+        )}
+
+        {/* ── Action Required banner (EXIT + held position) ── */}
+        {inPosition && tier === "EXIT" && (
+          <div
+            className="px-5 py-2 flex items-center gap-2 text-[11px] font-semibold"
+            style={{ backgroundColor: "rgba(255, 179, 174, 0.12)", borderBottom: "1px solid rgba(255, 179, 174, 0.25)", color: "#ffb3ae" }}
+          >
+            <AlertCircle size={13} className="shrink-0" />
+            Action Required — this setup has broken down. Close or reduce your position.
+          </div>
+        )}
+
         {/* ── Main row (always visible) ── */}
         <div
           className="flex items-center gap-4 px-5 py-4 cursor-pointer hover:bg-[#252b31]/30 transition-colors"
@@ -701,7 +818,13 @@ export default function SignalCard({
                 </button>
               )}
               <button
-                onClick={(e) => { e.stopPropagation(); setLogOpen((v) => !v); setLogError(""); setLogSuccess(false); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!logOpen) setLogShares(recommendedShares != null ? String(recommendedShares) : "");
+                  setLogOpen((v) => !v);
+                  setLogError("");
+                  setLogSuccess(false);
+                }}
                 className={`flex items-center gap-1 text-xs px-3 py-1 rounded-lg transition-colors font-medium ${
                   logSuccess
                     ? "bg-[#43ed9e]/20 text-[#43ed9e]"
@@ -716,13 +839,57 @@ export default function SignalCard({
               </button>
             </div>
 
-            {/* Log Trade inline form */}
+            {/* Log Trade — coaching form */}
             {logOpen && !logSuccess && (
-              <div className="mt-2 rounded-lg bg-[#0e141a] p-3 space-y-2" onClick={(e) => e.stopPropagation()}>
-                <p className="text-[10px] text-[#bacbbd]/60 uppercase tracking-widest">Log to journal</p>
+              <div className="mt-2 rounded-lg bg-[#0e141a] border border-[#3c4a40]/30 p-3 space-y-3" onClick={(e) => e.stopPropagation()}>
+                <p className="text-[10px] text-[#bacbbd]/60 uppercase tracking-widest font-semibold">Position Coach</p>
+
+                {/* Coaching note */}
+                {(tier === "HIGH_CONVICTION" || tier === "TACTICAL_BUY") && (
+                  <div
+                    className="rounded-lg px-3 py-2 text-[11px] leading-relaxed"
+                    style={{ backgroundColor: `${tColor}10`, color: tColor }}
+                  >
+                    {tier === "HIGH_CONVICTION"
+                      ? `Full position. All quality gates cleared. You're risking 2% of your account ($${(riskBudget).toLocaleString("en-US", { maximumFractionDigits: 0 })}) — if the stop hits, that's your maximum loss.`
+                      : `Half position recommended. One quality gate is still failing. You're risking 1% of your account ($${(riskBudget / 2).toLocaleString("en-US", { maximumFractionDigits: 0 })}) until the setup fully clears. You can add to the position if it upgrades to High Conviction.`
+                    }
+                  </div>
+                )}
+
+                {/* Account size + shares row */}
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <div>
-                    <label className="text-[#bacbbd]/60 block mb-1">Shares</label>
+                    <label className="text-[#bacbbd]/60 block mb-1">Account size ($)</label>
+                    <input
+                      type="number"
+                      min="50"
+                      max="500000"
+                      step="1000"
+                      value={accountSize}
+                      onChange={(e) => {
+                        const val = Math.min(500000, Math.max(50, parseInt(e.target.value) || 50));
+                        setAccountSize(val);
+                        localStorage.setItem(ACCOUNT_SIZE_KEY, String(val));
+                        // Recompute shares when account size changes
+                        const risk = entryPrice > 0 && stopPrice > 0 ? Math.abs(entryPrice - stopPrice) : null;
+                        let sh: number;
+                        if (garchVol && garchVol > 0 && entryPrice > 0) {
+                          sh = (val * 0.02) / (entryPrice * (garchVol / 100) * 2);
+                        } else if (risk && risk > 0) {
+                          sh = (val * 0.02) / risk;
+                        } else { return; }
+                        if (isTactical) sh = sh * 0.5;
+                        setLogShares(String(Math.max(1, Math.floor(sh))));
+                      }}
+                      className="w-full rounded px-2 py-1.5 bg-[#252b31] text-[#dde3ec] border border-[#3c4a40]/30 focus:outline-none focus:border-[#43ed9e]/40 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[#bacbbd]/60 block mb-1">
+                      Shares {garchVol ? "(GARCH sized)" : "(2% risk rule)"}
+                      {isTactical && <span className="ml-1 text-[#adc6ff]">½ pos</span>}
+                    </label>
                     <input
                       type="number"
                       min="1"
@@ -734,20 +901,37 @@ export default function SignalCard({
                       autoFocus
                     />
                   </div>
-                  <div>
-                    <label className="text-[#bacbbd]/60 block mb-1">Entry date</label>
-                    <input
-                      type="date"
-                      value={logDate}
-                      onChange={(e) => setLogDate(e.target.value)}
-                      className="w-full rounded px-2 py-1.5 bg-[#252b31] text-[#dde3ec] border border-[#3c4a40]/30 focus:outline-none focus:border-[#43ed9e]/40 text-xs"
-                    />
+                </div>
+
+                {/* Entry / Stop / Allocation summary */}
+                <div className="rounded px-2 py-1.5 bg-[#252b31]/60 text-[10px] space-y-0.5">
+                  <div className="flex justify-between">
+                    <span className="text-[#bacbbd]/50">Entry</span>
+                    <span className="text-[#dde3ec] font-mono">${entryPrice?.toFixed(2) ?? "—"}</span>
                   </div>
+                  <div className="flex justify-between">
+                    <span className="text-[#bacbbd]/50">Stop</span>
+                    <span className="text-[#ffb3ae] font-mono">${stopPrice?.toFixed(2) ?? "—"}</span>
+                  </div>
+                  {parseInt(logShares) > 0 && entryPrice > 0 && (
+                    <div className="flex justify-between border-t border-[#3c4a40]/20 pt-1 mt-1">
+                      <span className="text-[#bacbbd]/50">Total cost</span>
+                      <span className="text-[#dde3ec] font-mono">${(parseInt(logShares) * entryPrice).toLocaleString("en-US", { maximumFractionDigits: 0 })}</span>
+                    </div>
+                  )}
                 </div>
-                <div className="text-[10px] text-[#bacbbd]/50 space-y-0.5">
-                  <p>Ticker: <span className="text-[#dde3ec]">{ticker}</span> · Strategy: <span className="text-[#dde3ec]">{strategy.replace(/_/g, " ")}</span></p>
-                  <p>Entry: <span className="text-[#dde3ec]">${entryPrice?.toFixed(2) ?? "—"}</span> · Stop: <span className="text-[#ffb3ae]">${stopPrice?.toFixed(2) ?? "—"}</span></p>
+
+                {/* Entry date */}
+                <div>
+                  <label className="text-[10px] text-[#bacbbd]/60 block mb-1">Entry date</label>
+                  <input
+                    type="date"
+                    value={logDate}
+                    onChange={(e) => setLogDate(e.target.value)}
+                    className="w-full rounded px-2 py-1.5 bg-[#252b31] text-[#dde3ec] border border-[#3c4a40]/30 focus:outline-none focus:border-[#43ed9e]/40 text-xs"
+                  />
                 </div>
+
                 {logError && (
                   <div className="flex items-center gap-1.5 text-[10px] text-[#ffb3ae]">
                     <AlertCircle size={10} />
@@ -775,12 +959,13 @@ export default function SignalCard({
                             entry_date: logDate,
                             exit_date: null,
                             strategy,
-                            notes: `Signal conviction ${convictionScore}/100 — logged from dashboard`,
+                            notes: `Conviction ${convictionScore}/100 · ${tier?.replace(/_/g, " ") ?? ""} · Account $${accountSize.toLocaleString()}`,
                           }),
                         });
                         if (res.ok) {
                           setLogSuccess(true);
                           setLogOpen(false);
+                          onTradeLogged?.();
                           setTimeout(() => setLogSuccess(false), 3000);
                         } else {
                           const j = await res.json();
@@ -791,9 +976,9 @@ export default function SignalCard({
                       }
                     }}
                     className="flex-1 text-xs font-semibold py-1.5 rounded transition-colors disabled:opacity-50"
-                    style={{ backgroundColor: "var(--primary)", color: "var(--on-primary)" }}
+                    style={{ backgroundColor: tColor, color: "#0e141a" }}
                   >
-                    {logLoading ? "Logging…" : "Confirm & Log"}
+                    {logLoading ? "Logging…" : "Confirm & Log Trade"}
                   </button>
                   <button
                     onClick={() => { setLogOpen(false); setLogError(""); }}
