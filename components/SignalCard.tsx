@@ -170,44 +170,6 @@ const GATE_LABELS: Record<keyof HardGates, string> = {
   volPriceUnconfirmed: "No vol-price confirmation",
 };
 
-const STRATEGY_TIPS: Record<string, string> = {
-  momentum: "Momentum breakout — stock breaking above 50-day resistance with volume surge.",
-  momentum_breakout: "Momentum breakout — stock breaking above 50-day resistance with volume surge.",
-  mean_reversion: "Mean reversion — oversold stock showing signs of bouncing back toward its moving average.",
-  ema_pullback: "EMA pullback — stock in uptrend that pulled back to its 8-day average before resuming.",
-  etf_rotation: "ETF rotation — sector leader confirmed by volume, strong relative strength.",
-};
-
-function StrategyLabel({ strategy }: { strategy: string }) {
-  const [tipOpen, setTipOpen] = useState(false);
-  const key = strategy.toLowerCase().replace(/ /g, "_");
-  const tip = STRATEGY_TIPS[key] ?? `${strategy.replace(/_/g, " ")} strategy.`;
-
-  return (
-    <div className="relative mt-0.5">
-      <button
-        className="text-[10px] text-[#bacbbd]/60 uppercase tracking-wider hover:text-[#bacbbd] transition-colors"
-        onClick={(e) => { e.stopPropagation(); setTipOpen((v) => !v); }}
-      >
-        {strategy.replace(/_/g, " ")}
-      </button>
-      {tipOpen && (
-        <div
-          className="absolute top-full left-0 mt-1.5 w-64 rounded-xl bg-[#0e141a] border border-[#3c4a40]/40 px-3 py-2.5 text-[11px] text-[#bacbbd] leading-relaxed z-50 shadow-2xl"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {tip}
-          <button
-            className="block mt-1.5 text-[10px] text-[#bacbbd]/40 hover:text-[#bacbbd]/60"
-            onClick={(e) => { e.stopPropagation(); setTipOpen(false); }}
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
 
 export default function SignalCard({
   ticker, strength, price, changePct,
@@ -526,7 +488,6 @@ export default function SignalCard({
                 </span>
               )}
             </div>
-            <StrategyLabel strategy={strategy} />
           </div>
 
 
