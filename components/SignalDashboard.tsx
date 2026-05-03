@@ -10,19 +10,10 @@ import MlTrackRecord from "./MlTrackRecord";
 import SectorPulseBanner, { SectorPulseData } from "./SectorPulseBanner";
 import { RefreshCw, BookOpen } from "lucide-react";
 import { MlScore, MlPerformanceRow } from "@/lib/supabase";
+import type { HardGates, NbaDirective, SignalTier } from "@/lib/signals";
 
 const REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes
 const TRADE_THRESHOLD = 82;  // legacy: still used for cross-threshold notifications
-
-type SignalTier = "HIGH_CONVICTION" | "TACTICAL_BUY" | "WATCH_EXTENDED" | "OBSERVE" | "EXIT";
-
-interface HardGates {
-  rsiOverheated: boolean;
-  bbExtended: boolean;
-  targetBlocked: boolean;
-  sectorWeak: boolean;
-  volPriceUnconfirmed: boolean;
-}
 
 interface ValidationResult {
   passed: boolean;
@@ -103,6 +94,13 @@ interface SignalData {
   rsiAtEntry: number;
   bbPct: number;
   rsVsSpyNegativeStreak: number;
+  // Phase B: streak + ML delta
+  streakDays?: number;
+  mlDelta24h?: number | null;
+  streakDirection?: "rising" | "falling" | "flat";
+  // Phase C: NBA directive
+  nbaDirective?: NbaDirective;
+  nbaDirectiveReason?: string;
 }
 
 interface DashboardData {
@@ -316,9 +314,9 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
   const watchExtended = data.signals.filter((s) => s.tier === "WATCH_EXTENDED");
   const observe = data.signals.filter((s) => s.tier === "OBSERVE");
   const exitTier = data.signals.filter((s) => s.tier === "EXIT");
-  // Aliases for legacy stats-pill labels
-  const trade = highConviction;
-  const watch = tacticalBuy;
+  // Pill counts by directive — includes streak-promoted TACTICAL_BUY tickers in SCALE_IN count
+  const scaleInCount = data.signals.filter((s) => s.nbaDirective === "SCALE_IN").length;
+  const holdTrailCount = data.signals.filter((s) => s.nbaDirective === "HOLD_TRAIL").length;
 
   const updatedTime = new Date(data.updatedAt).toLocaleTimeString("en-US", {
     hour: "numeric",
@@ -360,8 +358,8 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
       <div className="flex items-center gap-2 flex-wrap">
         {[
           { label: `${data.signals.length} Signals` },
-          { label: `${trade.length} Trade`, color: "#43ed9e" },
-          { label: `${watch.length} Watch`, color: "#c8a84b" },
+          { label: `${scaleInCount} Scale In`, color: "#43ed9e" },
+          { label: `${holdTrailCount} Hold/Trail`, color: "#adc6ff" },
           {
             label:
               data.marketCondition === "bull" ? "Bull Market"
@@ -432,14 +430,14 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
         </div>
       </div>
 
-      {/* High Conviction (>82, all hard gates pass) */}
+      {/* Scale In Candidates (>82, all hard gates pass) */}
       {highConviction.length > 0 && (
         <section>
           <h2 className="text-sm font-semibold uppercase tracking-widest mb-1" style={sectionHead("#43ed9e")}>
-            HIGH CONVICTION ({highConviction.length})
+            SCALE IN CANDIDATES ({highConviction.length})
           </h2>
           <p className="text-[10px] mb-3" style={{ color: "var(--on-surface-variant)" }}>
-            All quality gates passed — clear to enter
+            All quality gates passed — clear to enter full position
           </p>
           <div className="space-y-3">
             {highConviction.map((s) => (
@@ -449,17 +447,17 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
         </section>
       )}
 
-      {/* Tactical Buy (70–81, or >82 with one failed gate) */}
+      {/* Hold / Trail (70–81, or >82 with one failed gate) */}
       {tacticalBuy.length > 0 && (
         <section>
           <h2 className="text-sm font-semibold uppercase tracking-widest mb-1" style={sectionHead("#adc6ff")}>
-            TACTICAL BUY ({tacticalBuy.length})
+            HOLD / TRAIL ({tacticalBuy.length})
           </h2>
           <p className="text-[10px] mb-1" style={{ color: "var(--on-surface-variant)" }}>
-            Strong setup with minor friction — standard position
+            Strong setup with minor friction — standard position, trail stop
           </p>
           <p className="text-[10px] mb-3" style={{ color: "var(--on-surface-variant)" }}>
-            Browser notification fires automatically when any of these qualify as High Conviction.
+            Browser notification fires automatically when any of these qualify for Scale In.
           </p>
           <div className="space-y-3">
             {tacticalBuy.map((s) => (
@@ -469,14 +467,14 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
         </section>
       )}
 
-      {/* Watch Extended — RSI overheated or BB extended */}
+      {/* Watch — Extended (RSI overheated, BB extended, or death cross) */}
       {watchExtended.length > 0 && (
         <section>
           <h2 className="text-sm font-semibold uppercase tracking-widest mb-1" style={sectionHead("#ffb33c")}>
             WATCH — EXTENDED ({watchExtended.length})
           </h2>
           <p className="text-[10px] mb-3" style={{ color: "var(--on-surface-variant)" }}>
-            Overheated entry — wait for pullback to 8-EMA
+            Overheated or bearish structure — wait for conditions to improve
           </p>
           <div className="space-y-3">
             {watchExtended.map((s) => (
@@ -486,14 +484,14 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
         </section>
       )}
 
-      {/* Observe */}
+      {/* Observe / Watch */}
       {observe.length > 0 && (
         <section>
           <h2 className="text-sm font-semibold uppercase tracking-widest mb-1" style={sectionHead("#c8a84b")}>
-            OBSERVE ({observe.length})
+            OBSERVE / WATCH ({observe.length})
           </h2>
           <p className="text-[10px] mb-3" style={{ color: "var(--on-surface-variant)" }}>
-            Weakening thesis — hold, do not add
+            Monitoring — no entry action
           </p>
           <div className="space-y-3">
             {observe.map((s) => (
@@ -503,11 +501,11 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
         </section>
       )}
 
-      {/* Exit — failed thesis */}
+      {/* Exit Now */}
       {exitTier.length > 0 && (
         <section>
           <h2 className="text-sm font-semibold uppercase tracking-widest mb-1" style={sectionHead("#ffb3ae")}>
-            EXIT SIGNAL ({exitTier.length})
+            EXIT NOW ({exitTier.length})
           </h2>
           <p className="text-[10px] mb-3" style={{ color: "var(--on-surface-variant)" }}>
             Thesis failed — reduce or close position

@@ -5,6 +5,7 @@ import { ChevronDown, ChevronUp, BookOpen, Check, AlertCircle } from "lucide-rea
 import SAModal from "./SAModal";
 import StockChart from "./StockChart";
 import FAQModal from "./FAQModal";
+import type { HardGates, NbaDirective, SignalTier } from "@/lib/signals";
 
 function todayStr() {
   return new Date().toISOString().split("T")[0];
@@ -31,15 +32,6 @@ interface ValidationResult {
   checked_at: string;
 }
 
-type SignalTier = "HIGH_CONVICTION" | "TACTICAL_BUY" | "WATCH_EXTENDED" | "OBSERVE" | "EXIT";
-
-interface HardGates {
-  rsiOverheated: boolean;
-  bbExtended: boolean;
-  targetBlocked: boolean;
-  sectorWeak: boolean;
-  volPriceUnconfirmed: boolean;
-}
 
 interface SignalCardProps {
   ticker: string;
@@ -84,6 +76,13 @@ interface SignalCardProps {
   rsiAtEntry?: number;
   rsVsSpyNegativeStreak?: number;
   ema8?: number;
+  // Phase B: streak + ML delta
+  streakDays?: number;
+  mlDelta24h?: number | null;
+  streakDirection?: "rising" | "falling" | "flat";
+  // Phase C: NBA directive
+  nbaDirective?: NbaDirective;
+  nbaDirectiveReason?: string;
   // Phase 3: position tracking
   inPosition?: boolean;
   openTradeCount?: number;
@@ -162,13 +161,43 @@ function tierBadge(tier?: SignalTier) {
   }
 }
 
-const GATE_LABELS: Record<keyof HardGates, string> = {
+const GATE_LABELS: Record<string, string> = {
   rsiOverheated: "RSI overheated (>78)",
   bbExtended: "BB extended (>90%)",
   targetBlocked: "Target > 52w high",
   sectorWeak: "Sector below MA20",
   volPriceUnconfirmed: "No vol-price confirmation",
+  deathCross: "Death cross (MA20 < MA50)",
+  belowMA50: "Price below MA50",
 };
+
+function nbaBadge(directive?: NbaDirective) {
+  switch (directive) {
+    case "SCALE_IN":
+      return { label: "SCALE IN", cls: "bg-[#43ed9e]/15 text-[#43ed9e] border border-[#43ed9e]/30" };
+    case "WATCH":
+      return { label: "WATCH", cls: "bg-[#00e7f6]/10 text-[#00e7f6] border border-[#00e7f6]/20" };
+    case "OBSERVE_WARN":
+      return { label: "OBSERVE ⚠", cls: "bg-[#ffb33c]/10 text-[#ffb33c] border border-[#ffb33c]/25" };
+    case "HOLD_TRAIL":
+      return { label: "HOLD / TRAIL", cls: "bg-[#5eead4]/10 text-[#5eead4] border border-[#5eead4]/20" };
+    case "HARVEST":
+      return { label: "HARVEST", cls: "bg-[#ffd700]/10 text-[#ffd700] border border-[#ffd700]/25" };
+    case "EXIT":
+      return { label: "EXIT", cls: "bg-[#ffb3ae]/15 text-[#ffb3ae] border border-[#ffb3ae]/30" };
+    default:
+      return null;
+  }
+}
+
+function mlDeltaArrow(mlDelta24h?: number | null): string | null {
+  if (mlDelta24h === null || mlDelta24h === undefined) return null;
+  if (mlDelta24h >= 10) return "↑↑";
+  if (mlDelta24h >= 3) return "↑";
+  if (mlDelta24h <= -10) return "↓↓";
+  if (mlDelta24h <= -3) return "↓";
+  return "→";
+}
 
 
 export default function SignalCard({
@@ -183,6 +212,8 @@ export default function SignalCard({
   convictionTrend, convictionStreak,
   prevClose, open,
   tier, hardGates, ema8,
+  streakDays, mlDelta24h, streakDirection,
+  nbaDirective, nbaDirectiveReason,
   inPosition, openTradeCount = 0, openTradeId, onTradeLogged,
 }: SignalCardProps) {
   const [modalOpen, setModalOpen] = useState(false);
@@ -258,6 +289,8 @@ export default function SignalCard({
   const tBadge = tierBadge(tier);
   const badge = tBadge ?? legacyBadge;
   const tColor = tierColor(tier);
+  const nBadge = nbaBadge(nbaDirective);
+  const deltaArrow = mlDeltaArrow(mlDelta24h);
 
   // Gates that fired (true = blocked High Conviction)
   const firedGates: (keyof HardGates)[] = hardGates
@@ -458,7 +491,24 @@ export default function SignalCard({
                   }`}
                   onClick={(e) => { e.stopPropagation(); setFaqMode("ml"); setFaqOpen(true); }}
                 >
-                  ML {mlScore}%{mlRank != null && <span className="text-[#6b7280] ml-1">#{mlRank}</span>}
+                  ML {mlScore}%
+                  {deltaArrow && (
+                    <span className={`ml-1 ${
+                      deltaArrow.startsWith("↑") ? "text-[#43ed9e]"
+                      : deltaArrow.startsWith("↓") ? "text-[#ffb3ae]"
+                      : "text-[#6b7280]"
+                    }`}>{deltaArrow}</span>
+                  )}
+                  {mlRank != null && <span className="text-[#6b7280] ml-1">#{mlRank}</span>}
+                </span>
+              )}
+              {/* NBA Directive badge — replaces old tier label as primary action signal */}
+              {nBadge && (
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded font-bold border ${nBadge.cls}`}
+                  title={nbaDirectiveReason ?? undefined}
+                >
+                  {nBadge.label}
                 </span>
               )}
               {/* Conviction trend chips — tappable to open FAQ trend explainer */}
@@ -485,6 +535,19 @@ export default function SignalCard({
                   title={`Signal held High Conviction for ${convictionStreak} consecutive days — sustained institutional interest.`}
                 >
                   Day {convictionStreak}
+                </span>
+              )}
+              {/* Streak badge — conviction > 85 held N days */}
+              {streakDays != null && streakDays >= 2 && (
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded font-bold border ${
+                    streakDays >= 3
+                      ? "bg-[#43ed9e]/10 text-[#43ed9e] border-[#43ed9e]/25"
+                      : "bg-[#00e7f6]/8 text-[#00e7f6] border-[#00e7f6]/15"
+                  }`}
+                  title={`Conviction above 85 for ${streakDays} consecutive days`}
+                >
+                  {streakDays}d streak
                 </span>
               )}
             </div>

@@ -157,25 +157,6 @@ export async function upsertSignalWeights(weights: SignalWeight[]): Promise<bool
   return !error;
 }
 
-// --- Signal History (closed-loop validation log) ---
-
-export interface SignalHistoryEntry {
-  ticker: string;
-  strategy: string;
-  score: number;
-  conviction_score: number;
-  entry_price: number;
-  stop_price: number;
-}
-
-/** Logs a signal snapshot to the history table for future closed-loop validation. */
-export async function logSignal(entry: SignalHistoryEntry): Promise<boolean> {
-  const { error } = await supabase.from("signal_history").insert({
-    ...entry,
-    recorded_at: new Date().toISOString(),
-  });
-  return !error;
-}
 
 // --- Backtest Results (strategy tuning logs) ---
 
@@ -206,6 +187,7 @@ export interface MlScore {
   ml_score: number;        // 0.0–1.0 raw probability
   ml_rank: number;         // 1 = highest score today
   ml_score_pct: number;    // 0–100 for display
+  ml_percentile_rank: number | null; // 0–100 true percentile within daily scored universe
   feature_snapshot: Record<string, number> | null;
   fwd_pe: number | null;
   market_cap_b: number | null;
@@ -257,7 +239,7 @@ export async function getMlScores(
   const d = scoreDate ?? await _latestScoreDate();
   const { data } = await supabase
     .from("ml_scores")
-    .select("ticker, ml_score, ml_rank, ml_score_pct, garch_vol, gap_pct_live, pm_vol_ratio_live, open_930_live")
+    .select("ticker, ml_score, ml_rank, ml_score_pct, ml_percentile_rank, garch_vol, gap_pct_live, pm_vol_ratio_live, open_930_live")
     .eq("score_date", d)
     .in("ticker", tickers);
   return Object.fromEntries((data ?? []).map((r) => [r.ticker, r as MlScore]));
@@ -272,7 +254,7 @@ export async function getMlDiscoveries(
   const d = scoreDate ?? await _latestScoreDate();
   let query = supabase
     .from("ml_scores")
-    .select("ticker, ml_score, ml_rank, ml_score_pct, feature_snapshot, fwd_pe, market_cap_b, garch_vol, gap_pct_live, pm_vol_ratio_live, open_930_live")
+    .select("ticker, ml_score, ml_rank, ml_score_pct, ml_percentile_rank, feature_snapshot, fwd_pe, market_cap_b, garch_vol, gap_pct_live, pm_vol_ratio_live, open_930_live")
     .eq("score_date", d)
     .order("ml_rank", { ascending: true })
     .limit(limit);
@@ -332,6 +314,67 @@ export async function getMlSectorPulse(
       return { etf, avgGap, pctPositive, direction };
     })
     .sort((a, b) => b.avgGap - a.avgGap);
+}
+
+// --- Signal Streaks (Phase B — Persistence Service) ---
+
+export interface SignalStreak {
+  ticker: string;
+  streak_days: number;          // consecutive days conviction_score > 85
+  ml_delta_24h: number | null;  // today ml_score_pct minus yesterday ml_score_pct
+  streak_direction: "rising" | "falling" | "flat";
+}
+
+/** Returns streak + ml_delta data for a list of tickers from signal_history.
+ *  Reads the last 3 rows per ticker ordered by score_date DESC.
+ *  Falls back gracefully: missing history → streak_days: 0, ml_delta_24h: null. */
+export async function getSignalStreaks(tickers: string[]): Promise<Record<string, SignalStreak>> {
+  if (tickers.length === 0) return {};
+
+  // Fetch last 5 rows per ticker — 5× budget so uneven history density across tickers
+  // doesn't crowd out some tickers from the global limit. Supabase returns rows globally
+  // (no per-partition support in JS client), so extra headroom keeps all tickers covered.
+  const { data } = await supabase
+    .from("signal_history")
+    .select("ticker, score_date, conviction_score, ml_score_pct")
+    .in("ticker", tickers)
+    .order("score_date", { ascending: false })
+    .limit(Math.max(tickers.length * 5, 100));
+
+  if (!data || data.length === 0) {
+    return Object.fromEntries(tickers.map((t) => [t, { ticker: t, streak_days: 0, ml_delta_24h: null, streak_direction: "flat" as const }]));
+  }
+
+  // Group by ticker
+  const byTicker: Record<string, { conviction_score: number; ml_score_pct: number | null }[]> = {};
+  for (const row of data) {
+    if (!byTicker[row.ticker]) byTicker[row.ticker] = [];
+    byTicker[row.ticker].push({ conviction_score: row.conviction_score, ml_score_pct: row.ml_score_pct });
+  }
+
+  const result: Record<string, SignalStreak> = {};
+  for (const ticker of tickers) {
+    const rows = byTicker[ticker] ?? [];
+    // rows[0] = today, rows[1] = yesterday, rows[2] = day before
+    let streak_days = 0;
+    for (const row of rows) {
+      if (row.conviction_score > 85) streak_days++;
+      else break;
+    }
+
+    const todayMl = rows[0]?.ml_score_pct ?? null;
+    const yesterdayMl = rows[1]?.ml_score_pct ?? null;
+    const ml_delta_24h = todayMl !== null && yesterdayMl !== null ? todayMl - yesterdayMl : null;
+
+    const streak_direction: SignalStreak["streak_direction"] =
+      ml_delta_24h === null ? "flat"
+      : ml_delta_24h > 2 ? "rising"
+      : ml_delta_24h < -2 ? "falling"
+      : "flat";
+
+    result[ticker] = { ticker, streak_days, ml_delta_24h, streak_direction };
+  }
+  return result;
 }
 
 /** Latest ml_health row — regime, VIX, calibration flag, and pulse breadth signal. */

@@ -72,6 +72,8 @@ export interface HardGates {
   targetBlocked: boolean;       // 3:1 target > 52w high
   sectorWeak: boolean;          // sectorEtf.close < sectorEtf.ma20
   volPriceUnconfirmed: boolean; // !(volume > 1.5×avg AND range > 1.2×avgRange of last 5 bars)
+  deathCross: boolean;          // MA20 < MA50 — bearish medium-term trend
+  belowMA50: boolean;           // price below MA50 — no institutional floor
 }
 
 export interface Signal {
@@ -909,7 +911,8 @@ export function evaluateHardGates(
   stopPrice: number,
   high52w: number,
   sectorEtfAboveMA20: boolean,
-  volPriceConfirmed: boolean
+  volPriceConfirmed: boolean,
+  latestClose: number = 0
 ): HardGates {
   const target = entryPrice + 3 * (entryPrice - stopPrice);
   return {
@@ -918,6 +921,8 @@ export function evaluateHardGates(
     targetBlocked: high52w > 0 && target > high52w,
     sectorWeak: !sectorEtfAboveMA20,
     volPriceUnconfirmed: !volPriceConfirmed,
+    deathCross: ind.ma20 > 0 && ind.ma50 > 0 && ind.ma20 < ind.ma50,
+    belowMA50: ind.ma50 > 0 && latestClose > 0 && latestClose < ind.ma50,
   };
 }
 
@@ -950,14 +955,16 @@ function assignTier(
 ): SignalTier {
   // 1. EXIT
   if (latestClose < ema8 && rsVsSpyNegativeStreak >= 3) return "EXIT";
-  // 2. WATCH_EXTENDED
-  if (hardGates.rsiOverheated || hardGates.bbExtended) return "WATCH_EXTENDED";
+  // 2. WATCH_EXTENDED — overheated or death cross (structurally bearish)
+  if (hardGates.rsiOverheated || hardGates.bbExtended || hardGates.deathCross) return "WATCH_EXTENDED";
   const anyHardGateFailed =
     hardGates.rsiOverheated ||
     hardGates.bbExtended ||
     hardGates.targetBlocked ||
     hardGates.sectorWeak ||
-    hardGates.volPriceUnconfirmed;
+    hardGates.volPriceUnconfirmed ||
+    hardGates.deathCross ||
+    hardGates.belowMA50;
   // 3. HIGH_CONVICTION
   if (convictionScore > 82 && !anyHardGateFailed) return "HIGH_CONVICTION";
   // 4. TACTICAL_BUY
@@ -965,6 +972,107 @@ function assignTier(
   if (convictionScore > 82 && anyHardGateFailed) return "TACTICAL_BUY";
   // 5. OBSERVE
   return "OBSERVE";
+}
+
+// ─── NBA Directive ───────────────────────────────────────────────────────────
+
+export type NbaDirective =
+  | "SCALE_IN"
+  | "WATCH"
+  | "OBSERVE_WARN"
+  | "HOLD_TRAIL"
+  | "HARVEST"
+  | "EXIT"
+  | "NOISE";
+
+/** Computes the Next Best Action directive from ML score, conviction, streaks, tier, and price context.
+ *  Called in the API route where mlScorePct and livePrice are available. */
+export function computeNbaDirective({
+  mlScorePct,
+  mlPercentileRank,
+  convictionScore,
+  streakDays,
+  mlDelta24h,
+  tier,
+  entryPrice,
+  stopPrice,
+  livePrice,
+  ema8,
+}: {
+  mlScorePct: number | null;
+  mlPercentileRank: number | null;
+  convictionScore: number;
+  streakDays: number;
+  mlDelta24h: number | null;
+  tier: SignalTier;
+  entryPrice: number;
+  stopPrice: number;
+  livePrice: number;
+  ema8: number;
+}): { directive: NbaDirective; reason: string } {
+  // EXIT always takes priority
+  if (tier === "EXIT") {
+    return { directive: "EXIT", reason: "Thesis failed — price below 8-EMA with sustained SPY underperformance" };
+  }
+
+  const ml = mlScorePct ?? 0;
+  const isHighMl = mlPercentileRank !== null ? mlPercentileRank >= 90 : ml >= 75;
+  const isLowMl = ml < 50;
+  const isHighConv = convictionScore > 85;
+  const isLowConv = convictionScore < 70;
+
+  let directive: NbaDirective;
+  let reason: string;
+
+  if (isHighMl && isHighConv) {
+    directive = "SCALE_IN";
+    reason = `ML ${ml}% + conviction ${convictionScore} — top-decile setup`;
+  } else if (isHighMl && !isHighConv && !isLowConv) {
+    directive = "WATCH";
+    reason = `ML sees accumulation (${ml}%) — technical setup building`;
+  } else if (isHighMl && isLowConv) {
+    directive = "WATCH";
+    reason = `ML sees accumulation (${ml}%) but technicals not yet confirmed`;
+  } else if (isLowMl && isHighConv) {
+    directive = "OBSERVE_WARN";
+    reason = `Strong technicals (${convictionScore}) but ML sees low follow-through (${ml}%) — possible bull trap`;
+  } else if (isLowMl && isLowConv) {
+    directive = "NOISE";
+    reason = "Neither ML nor technicals support entry";
+  } else {
+    directive = "WATCH";
+    reason = `Mixed signals — ML ${ml}%, conviction ${convictionScore}`;
+  }
+
+  // HARVEST: conviction high, price within 5% below target OR already above it (up to 10% past),
+  // AND ML fading — take profit before momentum exhausts.
+  if (convictionScore > 85 && entryPrice > 0 && stopPrice > 0 && livePrice > 0) {
+    const target = entryPrice + 3 * (entryPrice - stopPrice);
+    const distToTarget = target > 0 ? (target - livePrice) / target : 1;
+    // distToTarget: positive = below target, negative = above target
+    // window: -0.10 to +0.05 (up to 10% past target, or within 5% of it)
+    if (distToTarget >= -0.10 && distToTarget <= 0.05 && mlDelta24h !== null && mlDelta24h < -5) {
+      return {
+        directive: "HARVEST",
+        reason: `Price near or above target ($${target.toFixed(2)}) and ML fading (Δ${mlDelta24h.toFixed(0)}) — take profit`,
+      };
+    }
+  }
+
+  // HOLD / TRAIL: tactical setup, price above 8-EMA (in-position management)
+  if (tier === "TACTICAL_BUY" && ema8 > 0 && livePrice > ema8) {
+    return { directive: "HOLD_TRAIL", reason: "Price above 8-EMA — trail stop up, no new buying" };
+  }
+
+  // 3-day streak promotion: WATCH → SCALE_IN
+  if (directive === "WATCH" && streakDays >= 3) {
+    return {
+      directive: "SCALE_IN",
+      reason: `Conviction sustained ${streakDays} consecutive days — elevated follow-through probability`,
+    };
+  }
+
+  return { directive, reason };
 }
 
 // ─── buildSignal ─────────────────────────────────────────────────────────────
@@ -1004,11 +1112,11 @@ export function buildSignal(
     : "low";
 
   const volPriceConfirmed = computeVolPriceConfirmed(bars, ind.volumeRatio);
-  const hardGates = evaluateHardGates(ind, entryPrice, stopPrice, high52w, sectorEtfAboveMA20, volPriceConfirmed);
+  const latestClose = bars.length > 0 ? bars[bars.length - 1].close : 0;
+  const hardGates = evaluateHardGates(ind, entryPrice, stopPrice, high52w, sectorEtfAboveMA20, volPriceConfirmed, latestClose);
   const rsVsSpyNegativeStreak = spyBars.length >= 23 && bars.length >= 23
     ? computeRsVsSpyNegativeStreak(bars, spyBars)
     : 0;
-  const latestClose = bars.length > 0 ? bars[bars.length - 1].close : 0;
   const tier = assignTier(convictionScore, hardGates, latestClose, ind.ema8, rsVsSpyNegativeStreak);
 
   return {

@@ -128,6 +128,7 @@ create table if not exists ml_scores (
   ml_score        numeric(6,4) not null,   -- 0.0–1.0 raw probability
   ml_rank         int not null,            -- 1 = highest score today
   ml_score_pct    int not null,            -- 0–100 for display
+  ml_percentile_rank int,                  -- 0–100 true percentile within daily scored universe
   feature_snapshot jsonb,                  -- {RSI_14: 67.2, High52w_Pct: -0.03, ...}
   fwd_pe          numeric(8,2),            -- forward P/E ratio (null if unavailable)
   market_cap_b    numeric(8,2),            -- market cap in $B

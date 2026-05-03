@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { getWatchlist, getMlScores, getMlDiscoveries, getMlPerformance, getMlHealth, getMlSectorPulse } from "@/lib/supabase";
+import { getWatchlist, getMlScores, getMlDiscoveries, getMlPerformance, getMlHealth, getMlSectorPulse, getSignalStreaks } from "@/lib/supabase";
 import { getQuote, getHistorical, getNews, HistoricalBar } from "@/lib/yahoo";
-import { buildSignal } from "@/lib/signals";
+import { buildSignal, computeNbaDirective } from "@/lib/signals";
 import { SECTOR_ETF } from "@/lib/watchlist";
 import { getFinnhubData } from "@/lib/finnhub";
 import { getConvictionTrends } from "@/lib/conviction-history";
@@ -21,8 +21,8 @@ export async function GET() {
   const watchlist = await getWatchlist();
   const watchlistTickers = watchlist.map((w) => w.ticker);
 
-  // Fetch ML data + SPY bars + conviction trends in parallel
-  const [spyBars, mlScores, mlDiscoveries, mlPerformance, mlHealth, sectorPulse, convictionTrends] = await Promise.all([
+  // Fetch ML data + SPY bars + conviction trends + streaks in parallel
+  const [spyBars, mlScores, mlDiscoveries, mlPerformance, mlHealth, sectorPulse, convictionTrends, signalStreaks] = await Promise.all([
     getHistorical("SPY", 90),
     getMlScores(watchlistTickers),
     getMlDiscoveries(watchlistTickers, 10),
@@ -30,6 +30,7 @@ export async function GET() {
     getMlHealth(),
     getMlSectorPulse(SECTOR_ETF),
     getConvictionTrends(watchlistTickers),
+    getSignalStreaks(watchlistTickers),
   ]);
 
   // Fetch each unique sector ETF once and share across all tickers in that sector
@@ -74,6 +75,21 @@ export async function GET() {
         : null;
 
       const mlData = mlScores[ticker];
+      const streakData = signalStreaks[ticker];
+      const streakDays = streakData?.streak_days ?? 0;
+      const mlDelta24h = streakData?.ml_delta_24h ?? null;
+      const { directive: nbaDirective, reason: nbaDirectiveReason } = computeNbaDirective({
+        mlScorePct: mlData?.ml_score_pct ?? null,
+        mlPercentileRank: mlData?.ml_percentile_rank ?? null,
+        convictionScore: signal.convictionScore,
+        streakDays,
+        mlDelta24h,
+        tier: signal.tier,
+        entryPrice: signal.entryPrice,
+        stopPrice: signal.stopPrice,
+        livePrice: quote.price,
+        ema8: signal.indicators.ema8,
+      });
       return {
         ...signal,
         price: quote.price,
@@ -89,6 +105,11 @@ export async function GET() {
         open930Live: mlData?.open_930_live ?? null,
         convictionTrend: convictionTrends[ticker]?.trend ?? "stable",
         convictionStreak: convictionTrends[ticker]?.streak ?? 0,
+        streakDays,
+        mlDelta24h,
+        streakDirection: streakData?.streak_direction ?? "flat",
+        nbaDirective,
+        nbaDirectiveReason,
         sa: {
           earningsDays: earningsDays !== null && earningsDays >= 0 && earningsDays <= 14 ? earningsDays : null,
           recentHeadline: news?.title ?? null,
