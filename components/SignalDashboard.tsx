@@ -140,7 +140,8 @@ function notify(title: string, body: string) {
 
 interface OpenPositionSummary {
   count: number;
-  nearStop: string[];   // tickers near their stop
+  nearStop: string[];      // tickers near their stop
+  aboveTarget: string[];   // tickers past their 3:1 target
 }
 
 interface OpenTrade {
@@ -155,6 +156,7 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
   const [countdown, setCountdown] = useState(REFRESH_INTERVAL / 1000);
   const [calc, setCalc] = useState<CalcState>({ open: false, entry: null, stop: null });
   const [openPositions, setOpenPositions] = useState<OpenPositionSummary | null>(null);
+  const [showScoredTooltip, setShowScoredTooltip] = useState(false);
   // ticker → { ids: trade IDs[], count }
   const [positionData, setPositionData] = useState<Map<string, { ids: string[]; count: number }>>(new Map());
 
@@ -189,11 +191,11 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
       }
       setPositionData(pdMap);
 
-      if (openTrades.length === 0) { setOpenPositions({ count: 0, nearStop: [] }); return; }
+      if (openTrades.length === 0) { setOpenPositions({ count: 0, nearStop: [], aboveTarget: [] }); return; }
 
       const tickers = [...new Set(openTrades.map((t) => t.ticker))].join(",");
       const priceRes = await fetch(`/api/current-prices?tickers=${tickers}`);
-      if (!priceRes.ok) { setOpenPositions({ count: openTrades.length, nearStop: [] }); return; }
+      if (!priceRes.ok) { setOpenPositions({ count: openTrades.length, nearStop: [], aboveTarget: [] }); return; }
       const prices: Record<string, { price: number; prevClose: number; open: number } | null> = await priceRes.json();
 
       const nearStop = openTrades
@@ -205,9 +207,18 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
         })
         .map((t) => t.ticker);
 
+      const aboveTarget = openTrades
+        .filter((t) => {
+          const live = prices[t.ticker]?.price;
+          if (!live || !t.stop_price || t.stop_price >= t.entry_price) return false;
+          const target = t.entry_price + 3 * (t.entry_price - t.stop_price);
+          return live >= target;
+        })
+        .map((t) => t.ticker);
+
         // Store for Sprint D refresh-loop alerts
         openTradesRef.current = openTrades;
-        setOpenPositions({ count: openTrades.length, nearStop });
+        setOpenPositions({ count: openTrades.length, nearStop, aboveTarget });
       } catch { /* silent — morning brief is non-critical */ }
   }, []);
 
@@ -309,14 +320,25 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
     return () => clearInterval(tick);
   }, []);
 
-  const highConviction = data.signals.filter((s) => s.tier === "HIGH_CONVICTION");
-  const tacticalBuy = data.signals.filter((s) => s.tier === "TACTICAL_BUY");
+  // Build Position — two sub-groups
+  const scaleInDirective = data.signals.filter((s) => s.nbaDirective === "SCALE_IN");
+  const highConvictionDeveloping = data.signals.filter((s) => s.tier === "HIGH_CONVICTION" && s.nbaDirective !== "SCALE_IN");
+  const buildPosition = [...scaleInDirective, ...highConvictionDeveloping];
+  // Trend Riding — EXIT-directive cards float to top
+  const trendRiding = data.signals
+    .filter((s) => s.nbaDirective === "HOLD_TRAIL")
+    .sort((a, b) => (a.nbaDirective === "EXIT" ? -1 : b.nbaDirective === "EXIT" ? 1 : 0));
+  // Overheated — Wait
   const watchExtended = data.signals.filter((s) => s.tier === "WATCH_EXTENDED");
-  const observe = data.signals.filter((s) => s.tier === "OBSERVE");
-  const exitTier = data.signals.filter((s) => s.tier === "EXIT");
-  // Pill counts by directive — includes streak-promoted TACTICAL_BUY tickers in SCALE_IN count
-  const scaleInCount = data.signals.filter((s) => s.nbaDirective === "SCALE_IN").length;
-  const holdTrailCount = data.signals.filter((s) => s.nbaDirective === "HOLD_TRAIL").length;
+  // Not Yet — OBSERVE tier + WATCH + OBSERVE_WARN directives; EXIT cards float to top
+  const notYet = data.signals
+    .filter((s) => s.tier === "OBSERVE" || s.nbaDirective === "WATCH" || s.nbaDirective === "OBSERVE_WARN")
+    .sort((a, b) => (a.nbaDirective === "EXIT" ? -1 : b.nbaDirective === "EXIT" ? 1 : 0));
+  // EXIT-tier cards merge into notYet (no standalone Exit Now section)
+  const exitCards = data.signals.filter((s) => s.tier === "EXIT");
+  // Pill counts
+  const scaleInCount = scaleInDirective.length;
+  const holdTrailCount = trendRiding.length;
 
   const updatedTime = new Date(data.updatedAt).toLocaleTimeString("en-US", {
     hour: "numeric",
@@ -356,32 +378,50 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
 
       {/* Stats pills + session */}
       <div className="flex items-center gap-2 flex-wrap">
-        {[
-          { label: `${data.signals.length} Signals` },
-          { label: `${scaleInCount} Scale In`, color: "#43ed9e" },
-          { label: `${holdTrailCount} Hold/Trail`, color: "#adc6ff" },
-          {
-            label:
-              data.marketCondition === "bull" ? "Bull Market"
-              : data.marketCondition === "bear" ? "Bear Market"
-              : "Neutral",
-            color:
-              data.marketCondition === "bull" ? "#43ed9e"
-              : data.marketCondition === "bear" ? "#ffb3ae"
-              : undefined,
-          },
-        ].map(({ label, color }) => (
-          <span
-            key={label}
+        {/* Stocks Scored pill with tap tooltip */}
+        <span className="relative">
+          <button
+            type="button"
+            onClick={() => setShowScoredTooltip((v) => !v)}
             className="text-[11px] px-2.5 py-1 rounded-full"
-            style={{
-              backgroundColor: "var(--surface-container-high)",
-              color: color ?? "var(--on-surface-variant)",
-            }}
+            style={{ backgroundColor: "var(--surface-container-high)", color: "var(--on-surface-variant)" }}
           >
-            {label}
-          </span>
-        ))}
+            {data.signals.length} Stocks Scored
+          </button>
+          {showScoredTooltip && (
+            <div className="absolute left-0 top-7 z-10 rounded-lg px-3 py-2 text-[11px] leading-relaxed w-56 shadow-lg"
+              style={{ backgroundColor: "var(--surface-container-high)", color: "var(--on-surface-variant)", border: "1px solid rgba(255,255,255,0.08)" }}>
+              Total S&amp;P 500 stocks analyzed by the ML scorer today.
+            </div>
+          )}
+        </span>
+        {/* Scale In pill — scrolls to section */}
+        <button
+          type="button"
+          onClick={() => document.getElementById("section-scale-in")?.scrollIntoView({ behavior: "smooth" })}
+          className="text-[11px] px-2.5 py-1 rounded-full"
+          style={{ backgroundColor: "var(--surface-container-high)", color: "#43ed9e" }}
+        >
+          {scaleInCount} Scale In
+        </button>
+        {/* Hold/Trail pill — scrolls to section */}
+        <button
+          type="button"
+          onClick={() => document.getElementById("section-hold-trail")?.scrollIntoView({ behavior: "smooth" })}
+          className="text-[11px] px-2.5 py-1 rounded-full"
+          style={{ backgroundColor: "var(--surface-container-high)", color: "#adc6ff" }}
+        >
+          {holdTrailCount} Hold/Trail
+        </button>
+        <span
+          className="text-[11px] px-2.5 py-1 rounded-full"
+          style={{
+            backgroundColor: "var(--surface-container-high)",
+            color: data.marketCondition === "bull" ? "#43ed9e" : data.marketCondition === "bear" ? "#ffb3ae" : "var(--on-surface-variant)",
+          }}
+        >
+          {data.marketCondition === "bull" ? "Bull Market" : data.marketCondition === "bear" ? "Bear Market" : "Neutral"}
+        </span>
         <MarketSessionPill />
       </div>
 
@@ -408,6 +448,11 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
           ) : (
             <span className="text-xs text-[#43ed9e]">✓ All positions have stop buffer &gt;5%</span>
           )}
+          {openPositions.aboveTarget.length > 0 && (
+            <span className="flex items-center gap-1 text-xs font-semibold text-[#c084fc]">
+              🎯 Above target: {openPositions.aboveTarget.join(", ")} — consider harvesting gains
+            </span>
+          )}
           <a href="/journal" className="ml-auto text-xs underline-offset-2 hover:underline" style={{ color: "var(--on-surface-variant)" }}>
             View journal →
           </a>
@@ -430,51 +475,63 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
         </div>
       </div>
 
-      {/* Scale In Candidates (>82, all hard gates pass) */}
-      {highConviction.length > 0 && (
-        <section>
+      {/* Build Position — two sub-groups: ML Confirmed (SCALE_IN directive) + Developing (HIGH_CONVICTION tier) */}
+      {buildPosition.length > 0 && (
+        <section id="section-scale-in">
           <h2 className="text-sm font-semibold uppercase tracking-widest mb-1" style={sectionHead("#43ed9e")}>
-            SCALE IN CANDIDATES ({highConviction.length})
+            BUILD POSITION ({buildPosition.length})
           </h2>
           <p className="text-[10px] mb-3" style={{ color: "var(--on-surface-variant)" }}>
-            All quality gates passed — clear to enter full position
+            Conditions are strengthening. Ready to enter or add to your position.
           </p>
-          <div className="space-y-3">
-            {highConviction.map((s) => (
-              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} inPosition={positionData.has(s.ticker)} openTradeCount={positionData.get(s.ticker)?.count ?? 0} openTradeId={positionData.get(s.ticker)?.count === 1 ? positionData.get(s.ticker)?.ids[0] : undefined} onTradeLogged={loadPositions} />
-            ))}
-          </div>
+          {scaleInDirective.length > 0 && (
+            <div>
+              <p className="text-[10px] mb-2 uppercase tracking-widest" style={{ color: "var(--on-surface-variant)" }}>ML Confirmed · Day 3+</p>
+              <div className="space-y-3">
+                {scaleInDirective.map((s) => (
+                  <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} inPosition={positionData.has(s.ticker)} openTradeCount={positionData.get(s.ticker)?.count ?? 0} openTradeId={positionData.get(s.ticker)?.count === 1 ? positionData.get(s.ticker)?.ids[0] : undefined} onTradeLogged={loadPositions} />
+                ))}
+              </div>
+            </div>
+          )}
+          {highConvictionDeveloping.length > 0 && (
+            <div className={scaleInDirective.length > 0 ? "mt-4" : ""}>
+              <p className="text-[10px] mb-2 uppercase tracking-widest" style={{ color: "var(--on-surface-variant)" }}>Developing</p>
+              <div className="space-y-3">
+                {highConvictionDeveloping.map((s) => (
+                  <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} inPosition={positionData.has(s.ticker)} openTradeCount={positionData.get(s.ticker)?.count ?? 0} openTradeId={positionData.get(s.ticker)?.count === 1 ? positionData.get(s.ticker)?.ids[0] : undefined} onTradeLogged={loadPositions} />
+                ))}
+              </div>
+            </div>
+          )}
         </section>
       )}
 
-      {/* Hold / Trail (70–81, or >82 with one failed gate) */}
-      {tacticalBuy.length > 0 && (
-        <section>
+      {/* Trend Riding — HOLD_TRAIL directive; EXIT-directive cards float to top */}
+      {trendRiding.length > 0 && (
+        <section id="section-hold-trail">
           <h2 className="text-sm font-semibold uppercase tracking-widest mb-1" style={sectionHead("#adc6ff")}>
-            HOLD / TRAIL ({tacticalBuy.length})
+            TREND RIDING ({trendRiding.length})
           </h2>
-          <p className="text-[10px] mb-1" style={{ color: "var(--on-surface-variant)" }}>
-            Strong setup with minor friction — standard position, trail stop
-          </p>
           <p className="text-[10px] mb-3" style={{ color: "var(--on-surface-variant)" }}>
-            Browser notification fires automatically when any of these qualify for Scale In.
+            The trend is healthy. Stay invested and let winners run.
           </p>
           <div className="space-y-3">
-            {tacticalBuy.map((s) => (
+            {trendRiding.map((s) => (
               <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} inPosition={positionData.has(s.ticker)} openTradeCount={positionData.get(s.ticker)?.count ?? 0} openTradeId={positionData.get(s.ticker)?.count === 1 ? positionData.get(s.ticker)?.ids[0] : undefined} onTradeLogged={loadPositions} />
             ))}
           </div>
         </section>
       )}
 
-      {/* Watch — Extended (RSI overheated, BB extended, or death cross) */}
+      {/* Overheated — Wait (RSI overheated, BB extended, or death cross) */}
       {watchExtended.length > 0 && (
         <section>
           <h2 className="text-sm font-semibold uppercase tracking-widest mb-1" style={sectionHead("#ffb33c")}>
-            WATCH — EXTENDED ({watchExtended.length})
+            OVERHEATED — WAIT ({watchExtended.length})
           </h2>
           <p className="text-[10px] mb-3" style={{ color: "var(--on-surface-variant)" }}>
-            Overheated or bearish structure — wait for conditions to improve
+            Wait for better conditions. Avoid buying in this range.
           </p>
           <div className="space-y-3">
             {watchExtended.map((s) => (
@@ -484,34 +541,21 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
         </section>
       )}
 
-      {/* Observe / Watch */}
-      {observe.length > 0 && (
-        <section>
-          <h2 className="text-sm font-semibold uppercase tracking-widest mb-1" style={sectionHead("#c8a84b")}>
-            OBSERVE / WATCH ({observe.length})
-          </h2>
-          <p className="text-[10px] mb-3" style={{ color: "var(--on-surface-variant)" }}>
-            Monitoring — no entry action
-          </p>
-          <div className="space-y-3">
-            {observe.map((s) => (
-              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} inPosition={positionData.has(s.ticker)} openTradeCount={positionData.get(s.ticker)?.count ?? 0} openTradeId={positionData.get(s.ticker)?.count === 1 ? positionData.get(s.ticker)?.ids[0] : undefined} onTradeLogged={loadPositions} />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Exit Now */}
-      {exitTier.length > 0 && (
+      {/* Not Yet — OBSERVE tier + WATCH/OBSERVE_WARN directives + EXIT-tier cards; EXIT float to top */}
+      {(notYet.length > 0 || exitCards.length > 0) && (
         <section>
           <h2 className="text-sm font-semibold uppercase tracking-widest mb-1" style={sectionHead("#ffb3ae")}>
-            EXIT NOW ({exitTier.length})
+            NOT YET ({notYet.length + exitCards.length})
           </h2>
           <p className="text-[10px] mb-3" style={{ color: "var(--on-surface-variant)" }}>
-            Thesis failed — reduce or close position
+            Looking for an entry point. Stay patient while we wait for a signal.
           </p>
           <div className="space-y-3">
-            {exitTier.map((s) => (
+            {/* EXIT-tier cards first — thesis broken, EXIT pill visible on card */}
+            {exitCards.map((s) => (
+              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} inPosition={positionData.has(s.ticker)} openTradeCount={positionData.get(s.ticker)?.count ?? 0} openTradeId={positionData.get(s.ticker)?.count === 1 ? positionData.get(s.ticker)?.ids[0] : undefined} onTradeLogged={loadPositions} />
+            ))}
+            {notYet.map((s) => (
               <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} inPosition={positionData.has(s.ticker)} openTradeCount={positionData.get(s.ticker)?.count ?? 0} openTradeId={positionData.get(s.ticker)?.count === 1 ? positionData.get(s.ticker)?.ids[0] : undefined} onTradeLogged={loadPositions} />
             ))}
           </div>

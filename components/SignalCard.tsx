@@ -137,7 +137,7 @@ function tierColor(tier?: SignalTier): string {
     case "HIGH_CONVICTION": return "#43ed9e";
     case "TACTICAL_BUY":   return "#adc6ff";
     case "WATCH_EXTENDED": return "#ffb33c";
-    case "OBSERVE":        return "#c8a84b";
+    case "OBSERVE":        return "#ffb3ae";
     case "EXIT":           return "#ffb3ae";
     default:               return "#dde3ec";
   }
@@ -511,8 +511,8 @@ export default function SignalCard({
                   {nBadge.label}
                 </span>
               )}
-              {/* Conviction trend chips — tappable to open FAQ trend explainer */}
-              {convictionTrend === "rising" && convictionStreak != null && convictionStreak <= 3 && (
+              {/* Conviction trend chips — suppressed on EXIT (EXIT directive takes precedence) */}
+              {nbaDirective !== "EXIT" && convictionTrend === "rising" && convictionStreak != null && convictionStreak <= 3 && (
                 <button
                   className="text-[10px] px-1.5 py-0.5 rounded font-bold border bg-[#45dfa4]/10 text-[#45dfa4] border-[#45dfa4]/20 hover:bg-[#45dfa4]/20 transition-colors cursor-pointer"
                   onClick={(e) => { e.stopPropagation(); setFaqMode("trend"); setFaqOpen(true); }}
@@ -520,7 +520,7 @@ export default function SignalCard({
                   ↑ Momentum Building
                 </button>
               )}
-              {convictionTrend === "falling" && (
+              {nbaDirective !== "EXIT" && convictionTrend === "falling" && (
                 <button
                   className="text-[10px] px-1.5 py-0.5 rounded font-bold border bg-[#ffb3ae]/10 text-[#ffb3ae] border-[#ffb3ae]/20 hover:bg-[#ffb3ae]/20 transition-colors cursor-pointer"
                   onClick={(e) => { e.stopPropagation(); setFaqMode("trend"); setFaqOpen(true); }}

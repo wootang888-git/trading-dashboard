@@ -452,6 +452,8 @@ export default function JournalManager({ initial }: { initial: Trade[] }) {
                   statusLabel = "Stopped Out"; statusStyle = "bg-red-900/60 text-red-300 border-red-700";
                 } else if (stopBuffer !== null && stopBuffer < 5) {
                   statusLabel = "Near Stop"; statusStyle = "bg-orange-900/60 text-orange-300 border-orange-700";
+                } else if (targetBuffer !== null && targetBuffer <= 0) {
+                  statusLabel = "Target Achieved"; statusStyle = "bg-purple-900/60 text-purple-300 border-purple-700";
                 } else if (targetBuffer !== null && targetBuffer < 5) {
                   statusLabel = "Near Target"; statusStyle = "bg-green-900/60 text-green-300 border-green-700";
                 } else if (unrealizedPct !== null && unrealizedPct < 0) {
@@ -518,10 +520,21 @@ export default function JournalManager({ initial }: { initial: Trade[] }) {
                                   onClick={() => setTargetFormulaId(targetFormulaId === trade.id ? null : trade.id!)}
                                   className="flex items-center gap-1 group"
                                 >
-                                  <span className="text-gray-500">To target </span>
-                                  <span className="font-mono font-semibold text-[#43ed9e]">
-                                    {targetBuffer.toFixed(1)}% (${target.toFixed(2)})
-                                  </span>
+                                  {targetBuffer <= 0 ? (
+                                    <>
+                                      <span className="text-gray-500">Above target </span>
+                                      <span className="font-mono font-semibold text-[#c084fc]">
+                                        +{Math.abs(targetBuffer).toFixed(1)}% past ${target.toFixed(2)}
+                                      </span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <span className="text-gray-500">To target </span>
+                                      <span className="font-mono font-semibold text-[#43ed9e]">
+                                        {targetBuffer.toFixed(1)}% (${target.toFixed(2)})
+                                      </span>
+                                    </>
+                                  )}
                                   <span className="text-gray-600 group-hover:text-gray-400 transition-colors ml-0.5">
                                     {targetFormulaId === trade.id ? "▴" : "▾"}
                                   </span>
@@ -530,7 +543,10 @@ export default function JournalManager({ initial }: { initial: Trade[] }) {
                                   <div className="mt-1.5 ml-0 rounded bg-[#161c22] px-2.5 py-2 text-[10px] text-gray-400 leading-relaxed space-y-1">
                                     <p><span className="text-white font-medium">Formula:</span> Target = Entry + 3 × (Entry − Stop)</p>
                                     <p><span className="text-white font-medium">% shown:</span> (Target − Live Price) ÷ Entry Price</p>
-                                    <p className="text-gray-500">A high % means the stock is still far from its 3:1 reward target — either it has not moved yet, or it moved against you.</p>
+                                    {targetBuffer <= 0
+                                      ? <p className="text-[#c084fc]">Price has passed the 3:1 target — consider harvesting gains or trailing your stop to lock in profit.</p>
+                                      : <p className="text-gray-500">A high % means the stock is still far from its 3:1 reward target.</p>
+                                    }
                                   </div>
                                 )}
                               </div>

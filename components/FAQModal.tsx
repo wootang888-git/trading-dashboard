@@ -313,44 +313,37 @@ export default function FAQModal({ open, onClose, mode = "conviction", mlScore, 
           {/* Signal Tiers — 5-tier system */}
           <section>
             <h3 className="text-[12px] md:text-[14px] font-bold uppercase tracking-widest text-[#bacbbd]/50 mb-3">
-              Signal Tiers (5-tier)
+              Conviction Bands
             </h3>
             <div className="space-y-2">
               {[
                 {
                   range: "> 82",
-                  label: "High Conviction",
+                  label: "Build Position",
                   color: "text-[#43ed9e]",
                   bg: "bg-[#43ed9e]/10",
-                  desc: "Composite score above 82 AND all 5 hard gates pass. Clear to enter full position.",
+                  desc: "Conditions are strengthening. Score above 82 and all quality checks pass. Ready to enter or add to your position. ML Confirmed sub-group (Day 3+ with rising momentum) is the strongest entry signal.",
                 },
                 {
                   range: "70–82",
-                  label: "Tactical Buy",
+                  label: "Trend Riding",
                   color: "text-[#adc6ff]",
                   bg: "bg-[#adc6ff]/10",
-                  desc: "Score ≥70, OR score >82 with at least one hard gate not met. Strong setup with a specific reason holding it back from High Conviction.",
+                  desc: "The trend is healthy. Stay invested and let winners run. Trail your stop higher as the stock moves in your favor — don't exit early.",
                 },
                 {
                   range: "any",
-                  label: "Watch — Extended",
+                  label: "Overheated — Wait",
                   color: "text-[#ffb33c]",
                   bg: "bg-[#ffb33c]/10",
-                  desc: "This stock has moved too far, too fast. Buying now means chasing — the price is stretched above its normal range, like a rubber band pulled tight. Wait for it to pull back to the 8-day moving average before entering. The setup is valid; the timing is not.",
+                  desc: "This stock has moved too far, too fast. Buying now means chasing — the price is stretched above its normal range, like a rubber band pulled tight. Wait for better conditions. Avoid buying in this range.",
                 },
                 {
                   range: "any",
-                  label: "Observe",
+                  label: "Not Yet",
                   color: "text-[#c8a84b]",
                   bg: "bg-[#c8a84b]/10",
-                  desc: "Weakening thesis: target above 52w high, sector ETF below MA20, or 3-day RS lag vs SPY. Hold, do not add.",
-                },
-                {
-                  range: "any",
-                  label: "Exit",
-                  color: "text-[#ffb3ae]",
-                  bg: "bg-[#ffb3ae]/10",
-                  desc: "Price below 8-EMA AND RS vs SPY negative 3 days running. Reduce or close position.",
+                  desc: "Looking for an entry point. Stay patient while we wait for a signal. Thesis may be weakening — hold existing positions but don't add.",
                 },
               ].map(({ range, label, color, bg, desc }) => (
                 <div key={label} className={`rounded-lg p-3 ${bg}`}>
@@ -372,7 +365,7 @@ export default function FAQModal({ open, onClose, mode = "conviction", mlScore, 
               The 5 Hard Gates
             </h3>
             <p className="text-[12px] md:text-[14px] text-[#bacbbd]/60 mb-3 leading-relaxed">
-              High Conviction requires <span className="text-[#dde3ec] font-medium">all five gates to pass</span>. If even one gate fires, the signal drops to Tactical Buy regardless of score.
+              High Conviction requires <span className="text-[#dde3ec] font-medium">all five gates to pass</span>. If even one gate fires, the signal drops to Hold / Trail regardless of score.
             </p>
             <div className="space-y-2.5">
               {[
