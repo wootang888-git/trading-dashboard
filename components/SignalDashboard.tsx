@@ -402,7 +402,7 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
           className="text-[11px] px-2.5 py-1 rounded-full"
           style={{ backgroundColor: "var(--surface-container-high)", color: "#43ed9e" }}
         >
-          {scaleInCount} Scale In
+          {scaleInCount} Build Position
         </button>
         {/* Hold/Trail pill — scrolls to section */}
         <button
@@ -411,7 +411,7 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
           className="text-[11px] px-2.5 py-1 rounded-full"
           style={{ backgroundColor: "var(--surface-container-high)", color: "#adc6ff" }}
         >
-          {holdTrailCount} Hold/Trail
+          {holdTrailCount} Trend Riding
         </button>
         <span
           className="text-[11px] px-2.5 py-1 rounded-full"
