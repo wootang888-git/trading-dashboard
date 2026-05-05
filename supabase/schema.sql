@@ -188,6 +188,7 @@ create table if not exists ml_health (
   calibration_flag      text,                       -- 'OVERCONFIDENT' | 'UNDERPERFORMING' | 'OK' | null
   breadth_score         numeric,                    -- fraction of tickers with positive gap (0.0–1.0)
   breadth_flag          text,                       -- 'accumulation' | 'neutral' | 'distribution'
+  discovery_source      text default 'skipped',     -- 'google_sheet' | 'fallback_static' | 'skipped'
   computed_at           timestamptz default now()
 );
 
@@ -196,3 +197,26 @@ create policy "public read ml_health"   on ml_health for select using (true);
 create policy "service write ml_health" on ml_health for all    using (true);
 
 create index if not exists ml_health_date_idx on ml_health (score_date desc);
+
+-- Sheet-sourced discovery results: tickers outside S&P 500 that passed the Google Sheet
+-- conviction filter (col Q = "SCALE ...") and were scored by XGBoost.
+create table if not exists ml_discoveries (
+  id                  bigserial primary key,
+  ticker              text not null,
+  score_date          date not null,
+  ml_score            numeric(6,4) not null,
+  ml_score_pct        int,
+  ml_percentile_rank  int,
+  conviction_score    int,
+  nba_directive       text,
+  feature_snapshot    jsonb,
+  source              text default 'google_sheet',
+  created_at          timestamptz default now(),
+  unique(ticker, score_date)
+);
+
+alter table ml_discoveries enable row level security;
+create policy "public read ml_discoveries"   on ml_discoveries for select using (true);
+create policy "service write ml_discoveries" on ml_discoveries for all    using (true);
+
+create index if not exists ml_discoveries_date_idx on ml_discoveries (score_date desc);
