@@ -1,8 +1,8 @@
 import SignalDashboard from "@/components/SignalDashboard";
-import { getWatchlist, getMlScores, getMlDiscoveries, getMlPerformance, getMlHealth, getMlSectorPulse } from "@/lib/supabase";
+import { getWatchlist, getMlScores, getMlDiscoveries, getMlPerformance, getMlHealth, getMlSectorPulse, getSignalStreaks } from "@/lib/supabase";
 import { getConvictionTrends } from "@/lib/conviction-history";
 import { getQuote, getHistorical, getNews, HistoricalBar } from "@/lib/yahoo";
-import { buildSignal } from "@/lib/signals";
+import { buildSignal, computeNbaDirective } from "@/lib/signals";
 import { SECTOR_ETF } from "@/lib/watchlist";
 import { getFinnhubData } from "@/lib/finnhub";
 
@@ -97,26 +97,50 @@ async function getInitialData() {
     : "neutral";
 
   const watchlistTickers = watchlist.map((w) => w.ticker);
-  const [mlScores, mlDiscoveries, mlPerformance, mlHealth, sectorPulse, convictionTrends] = await Promise.all([
+  const [mlScores, mlDiscoveries, mlPerformance, mlHealth, sectorPulse, convictionTrends, signalStreaks] = await Promise.all([
     getMlScores(watchlistTickers),
     getMlDiscoveries(watchlistTickers, 10),
     getMlPerformance(20),
     getMlHealth(),
     getMlSectorPulse(SECTOR_ETF),
     getConvictionTrends(watchlistTickers),
+    getSignalStreaks(watchlistTickers),
   ]);
 
-  const enrichedSignals = (signals as NonNullable<(typeof signals)[number]>[]).map((s) => ({
-    ...s,
-    mlScore: mlScores[s.ticker]?.ml_score_pct ?? null,
-    mlRank: mlScores[s.ticker]?.ml_rank ?? null,
-    garchVol: mlScores[s.ticker]?.garch_vol ?? null,
-    gapPctLive: mlScores[s.ticker]?.gap_pct_live ?? null,
-    pmVolRatioLive: mlScores[s.ticker]?.pm_vol_ratio_live ?? null,
-    open930Live: mlScores[s.ticker]?.open_930_live ?? null,
-    convictionTrend: convictionTrends[s.ticker]?.trend ?? "stable",
-    convictionStreak: convictionTrends[s.ticker]?.streak ?? 0,
-  }));
+  const enrichedSignals = (signals as NonNullable<(typeof signals)[number]>[]).map((s) => {
+    const mlData = mlScores[s.ticker];
+    const streakData = signalStreaks[s.ticker];
+    const streakDays = streakData?.streak_days ?? 0;
+    const mlDelta24h = streakData?.ml_delta_24h ?? null;
+    const { directive: nbaDirective, reason: nbaDirectiveReason } = computeNbaDirective({
+      mlScorePct: mlData?.ml_score_pct ?? null,
+      mlPercentileRank: mlData?.ml_percentile_rank ?? null,
+      convictionScore: s.convictionScore,
+      streakDays,
+      mlDelta24h,
+      tier: s.tier,
+      entryPrice: s.entryPrice,
+      stopPrice: s.stopPrice,
+      livePrice: s.price,
+      ema8: s.indicators.ema8,
+    });
+    return {
+      ...s,
+      mlScore: mlData?.ml_score_pct ?? null,
+      mlRank: mlData?.ml_rank ?? null,
+      garchVol: mlData?.garch_vol ?? null,
+      gapPctLive: mlData?.gap_pct_live ?? null,
+      pmVolRatioLive: mlData?.pm_vol_ratio_live ?? null,
+      open930Live: mlData?.open_930_live ?? null,
+      convictionTrend: convictionTrends[s.ticker]?.trend ?? "stable",
+      convictionStreak: convictionTrends[s.ticker]?.streak ?? 0,
+      streakDays,
+      mlDelta24h,
+      streakDirection: streakData?.streak_direction ?? "flat",
+      nbaDirective,
+      nbaDirectiveReason,
+    };
+  });
 
   return {
     signals: enrichedSignals,
