@@ -318,18 +318,18 @@ export default function FAQModal({ open, onClose, mode = "conviction", mlScore, 
             <div className="space-y-2">
               {[
                 {
-                  range: "> 82",
+                  range: "75–90+",
                   label: "Build Position",
                   color: "text-[#43ed9e]",
                   bg: "bg-[#43ed9e]/10",
-                  desc: "Conditions are strengthening. Score above 82 and all quality checks pass. Ready to enter or add to your position. ML Confirmed sub-group (Day 3+ with rising momentum) is the strongest entry signal.",
+                  desc: "Conditions are strengthening. Score passes the threshold for the current market regime (Bull ≥82, Choppy ≥75, Bear ≥90) and all quality checks pass. Ready to enter or add to your position. ML Confirmed sub-group (Day 3+ with rising momentum) is the strongest entry signal.",
                 },
                 {
-                  range: "70–82",
+                  range: "70–threshold",
                   label: "Trend Riding",
                   color: "text-[#adc6ff]",
                   bg: "bg-[#adc6ff]/10",
-                  desc: "The trend is healthy. Stay invested and let winners run. Trail your stop higher as the stock moves in your favor — don't exit early.",
+                  desc: "The trend is healthy. Score is building toward the Build Position threshold. Stay invested and let winners run. Trail your stop higher as the stock moves in your favor — don't exit early.",
                 },
                 {
                   range: "any",
@@ -371,7 +371,8 @@ export default function FAQModal({ open, onClose, mode = "conviction", mlScore, 
               {[
                 { label: "RSI Overheated", desc: "RSI 14 above 78 — momentum stretched, entry risk of immediate pullback." },
                 { label: "BB Extended", desc: "Bollinger Band %B above 90% — price hugging upper band, mean reversion likely." },
-                { label: "Target Blocked", desc: "3:1 reward target sits above the 52-week high. Path requires breaking major resistance." },
+                { label: "R:R Below Minimum", desc: "The 52-week high is too close to the entry price to achieve a 2.0:1 reward-to-risk ratio. Signal moves to Observe until the setup improves." },
+                { label: "Death Cross", desc: "The 20-day moving average has crossed below the 50-day. This is a structural downtrend signal — not a timing issue. The stock needs the trend to reverse before entry is valid." },
                 { label: "Sector Weak", desc: "Sector ETF closes below its 20-day moving average. Industry tide is against the trade." },
                 { label: "Vol-Price Unconfirmed", desc: "Volume <1.5× average OR daily range <1.2× recent. Move lacks institutional conviction." },
               ].map(({ label, desc }) => (
@@ -447,12 +448,52 @@ export default function FAQModal({ open, onClose, mode = "conviction", mlScore, 
               Target Price
             </h3>
             <div className="rounded-lg bg-[#161c22] p-3 space-y-2 font-mono text-[13px] md:text-[15px] break-words">
-              <p className="text-[#dde3ec]">Target = Entry + 3 × (Entry − Stop)</p>
-              <p className="text-[#bacbbd]/60">3:1 reward-to-risk ratio</p>
+              <p className="text-[#dde3ec]">Target = Nearest structural resistance</p>
+              <p className="text-[#bacbbd]/60">R:R = (Target − Entry) ÷ (Entry − Stop)</p>
+              <p className="text-[#bacbbd]/60">Minimum: 2.0:1 to qualify for Trade or Watch</p>
             </div>
             <p className="text-[12px] md:text-[14px] text-[#bacbbd]/60 mt-2.5 leading-relaxed">
-              <span className="text-[#dde3ec] font-medium">"To target %"</span> shows how far the current live price is from the target, as a percentage of your entry price. A high percentage means the stock is far from the target — either because it has not moved yet, or it moved against you.
+              The target is set at the nearest overhead resistance — typically the 52-week high. The R:R ratio shown on each card reflects what is actually achievable based on where the stock trades, not a fixed 3:1 assumption. Only setups with ≥2.0:1 qualify for a Trade or Watch signal.
             </p>
+          </section>
+
+          <div className="border-t border-[#3c4a40]/20" />
+
+          {/* Trail Mode */}
+          <section>
+            <h3 className="text-[12px] md:text-[14px] font-bold uppercase tracking-widest text-[#bacbbd]/50 mb-3">
+              What does &quot;Trail&quot; mean?
+            </h3>
+            <p className="text-[12px] md:text-[14px] text-[#bacbbd]/60 leading-relaxed">
+              When a stock clears its 52-week high, there is no fixed resistance ceiling to use as a target — the stock is in open air. SwingAI switches to <span className="text-[#adc6ff] font-medium">Trail mode</span>: instead of a price target, the card shows a trailing stop level based on the 8-day EMA and 1.5× ATR.
+            </p>
+            <p className="text-[12px] md:text-[14px] text-[#bacbbd]/60 mt-2 leading-relaxed">
+              Hold the position until the price crosses below the trail line. As the stock runs higher, the trail line rises with it — locking in gains without requiring you to guess where to sell.
+            </p>
+          </section>
+
+          <div className="border-t border-[#3c4a40]/20" />
+
+          {/* Regime Labels */}
+          <section>
+            <h3 className="text-[12px] md:text-[14px] font-bold uppercase tracking-widest text-[#bacbbd]/50 mb-3">
+              Bull / Choppy / Bear
+            </h3>
+            <p className="text-[12px] md:text-[14px] text-[#bacbbd]/60 mb-3 leading-relaxed">
+              Each signal shows a market regime label based on ADX (Average Directional Index), which measures trend strength — not direction.
+            </p>
+            <div className="space-y-2.5">
+              {[
+                { label: "Bull", color: "#43ed9e", desc: "ADX above 25 with buyers in control. Momentum breakout setups are favored. Requires conviction ≥82 for Build Position." },
+                { label: "Choppy", color: "#ffb33c", desc: "ADX below 20 — no clear trend. Mean reversion setups are favored. Conviction threshold is lower (75) so more setups qualify." },
+                { label: "Bear", color: "#ffb3ae", desc: "ADX above 25 with sellers in control. Only the highest-conviction setups (90+) qualify, and a 3.0:1 R:R is required." },
+              ].map(({ label, color, desc }) => (
+                <div key={label} className="flex items-start gap-3">
+                  <span className="text-[11px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5" style={{ color, backgroundColor: `${color}20` }}>{label.toUpperCase()}</span>
+                  <p className="text-[12px] md:text-[14px] text-[#bacbbd]/60 leading-relaxed">{desc}</p>
+                </div>
+              ))}
+            </div>
           </section>
 
           <div className="pb-safe" />

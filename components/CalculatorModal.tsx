@@ -198,7 +198,7 @@ export default function CalculatorModal({ entry: initialEntry, stop: initialStop
 
               <div style={{ borderTop: "1px solid rgba(60,74,64,0.3)" }} className="pt-2 space-y-2">
                 <div className="flex justify-between text-xs">
-                  <span style={labelStyle}>Target (2:1)</span>
+                  <span style={labelStyle}>Est. target (2:1 min)</span>
                   <span className="font-mono" style={{ color: "#43ed9e" }}>${target!.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-xs">

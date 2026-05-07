@@ -123,6 +123,8 @@ async function getInitialData() {
       stopPrice: s.stopPrice,
       livePrice: s.price,
       ema8: s.indicators.ema8,
+      structuralTarget: s.structuralTarget,
+      trailMode: s.trailMode,
     });
     return {
       ...s,

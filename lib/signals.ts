@@ -69,12 +69,14 @@ export type SignalTier =
 export interface HardGates {
   rsiOverheated: boolean;       // RSI > 78
   bbExtended: boolean;          // bbPct > 0.90
-  targetBlocked: boolean;       // 3:1 target > 52w high
+  rrBelowMinimum: boolean;      // achievable R:R < 2.0 (structural target too close)
   sectorWeak: boolean;          // sectorEtf.close < sectorEtf.ma20
   volPriceUnconfirmed: boolean; // !(volume > 1.5×avg AND range > 1.2×avgRange of last 5 bars)
   deathCross: boolean;          // MA20 < MA50 — bearish medium-term trend
   belowMA50: boolean;           // price below MA50 — no institutional floor
 }
+
+export type MarketRegime = "bull" | "bear" | "choppy";
 
 export interface Signal {
   ticker: string;
@@ -98,6 +100,11 @@ export interface Signal {
   rsiAtEntry: number;
   bbPct: number;
   rsVsSpyNegativeStreak: number;
+  // Dynamic structural trade setup (replaces hardcoded 3:1)
+  structuralTarget: number;      // nearest overhead resistance ceiling (52w high, or trail stop in ATH mode)
+  rrAchievable: number;          // (structuralTarget − entryPrice) / risk; 3.0 in trail mode
+  trailMode: boolean;            // true when price ≥ 52w high — show trailing stop instead of fixed target
+  regime: MarketRegime;          // ADX-based market regime
 }
 
 // ─── Indicator helpers ───────────────────────────────────────────────────────
@@ -156,6 +163,80 @@ function calcATR(bars: HistoricalBar[], period = 14): number {
   }
   if (trs.length < period) return trs.reduce((s, v) => s + v, 0) / trs.length;
   return trs.slice(-period).reduce((s, v) => s + v, 0) / period;
+}
+
+/** ADX (Average Directional Index) — 14-period Wilder smoothing.
+ *  Returns regime: "bull" (ADX>25, +DI>-DI), "bear" (ADX>25, -DI>+DI), "choppy" (ADX≤25). */
+function computeADX(bars: HistoricalBar[], period = 14): {
+  adx: number; plusDI: number; minusDI: number; regime: MarketRegime;
+} {
+  if (bars.length < period * 2 + 1) return { adx: 0, plusDI: 0, minusDI: 0, regime: "choppy" };
+  const plusDMs: number[] = [];
+  const minusDMs: number[] = [];
+  const trs: number[] = [];
+  for (let i = 1; i < bars.length; i++) {
+    const upMove = bars[i].high - bars[i - 1].high;
+    const downMove = bars[i - 1].low - bars[i].low;
+    plusDMs.push(upMove > downMove && upMove > 0 ? upMove : 0);
+    minusDMs.push(downMove > upMove && downMove > 0 ? downMove : 0);
+    trs.push(Math.max(
+      bars[i].high - bars[i].low,
+      Math.abs(bars[i].high - bars[i - 1].close),
+      Math.abs(bars[i].low - bars[i - 1].close)
+    ));
+  }
+  // Wilder smoothing
+  const wilder = (arr: number[]): number[] => {
+    if (arr.length < period) return [0];
+    const out: number[] = [];
+    let s = arr.slice(0, period).reduce((a, b) => a + b, 0);
+    out.push(s);
+    for (let i = period; i < arr.length; i++) { s = s - s / period + arr[i]; out.push(s); }
+    return out;
+  };
+  const sTR = wilder(trs);
+  const sPDM = wilder(plusDMs);
+  const sMDM = wilder(minusDMs);
+  const pDI = sPDM.map((v, i) => sTR[i] > 0 ? 100 * v / sTR[i] : 0);
+  const mDI = sMDM.map((v, i) => sTR[i] > 0 ? 100 * v / sTR[i] : 0);
+  const dx = pDI.map((p, i) => { const m = mDI[i]; const s = p + m; return s > 0 ? 100 * Math.abs(p - m) / s : 0; });
+  const adxSmooth = wilder(dx);
+  const adx = adxSmooth[adxSmooth.length - 1] ?? 0;
+  const plusDI = pDI[pDI.length - 1] ?? 0;
+  const minusDI = mDI[mDI.length - 1] ?? 0;
+  const regime: MarketRegime = adx > 25 && plusDI > minusDI ? "bull"
+    : adx > 25 && minusDI > plusDI ? "bear"
+    : "choppy";
+  return { adx, plusDI, minusDI, regime };
+}
+
+/** Computes structural target (nearest resistance ceiling) and achievable R:R.
+ *  Switches to trail mode (returns trailing stop level) when price is at/above 52w high. */
+function computeStructuralTarget(
+  entryPrice: number,
+  stopPrice: number,
+  high52w: number,
+  latestClose: number,
+  atr14: number,
+  ema8: number
+): { target: number; rrRatio: number; mode: "fixed" | "trail" } {
+  const risk = entryPrice - stopPrice;
+  if (risk <= 0 || entryPrice <= 0) return { target: entryPrice, rrRatio: 0, mode: "fixed" };
+  // ATH breakout: price within 0.5% of or above 52w high → trail mode
+  if (high52w > 0 && latestClose >= high52w * 0.995) {
+    const trailStop = Math.max(
+      latestClose - 1.5 * atr14,
+      ema8 > 0 ? ema8 : latestClose * 0.97
+    );
+    return { target: trailStop, rrRatio: 3.0, mode: "trail" };
+  }
+  // Structural target = 52w high (primary resistance ceiling)
+  if (high52w > 0) {
+    const achievableRR = (high52w - entryPrice) / risk;
+    return { target: high52w, rrRatio: achievableRR, mode: "fixed" };
+  }
+  // Fallback when no 52w high data
+  return { target: entryPrice + 3 * risk, rrRatio: 3.0, mode: "fixed" };
 }
 
 /** OBV (On-Balance Volume) helper */
@@ -449,8 +530,8 @@ export function scoreMomentumBreakout(
   // AC-010: ATR Guard
   if (ind.atr14 < 0.05) return { score: 0, entryPrice: 0, stopPrice: 0, entryNote: "ATR too low", stopNote: "ATR too low", conditions: [] };
 
-  // Convergence Entry: $0.05 above the 50d Resistance High (Structural Pivot)
-  const entryPrice = ind.high50d + 0.05;
+  // Convergence Entry: ATR-scaled buffer above 50d Resistance High (volatility-normalized)
+  const entryPrice = ind.high50d + Math.max(ind.atr14 * 0.10, 0.01);
 
   // Technical stop: below recent swing low − 0.5× ATR buffer; fallback to 1.5× ATR from entry
   const swingStop = ind.recentSwingLow !== null && ind.atr14 > 0
@@ -467,7 +548,7 @@ export function scoreMomentumBreakout(
     score: Math.min(score, 10),
     entryPrice,
     stopPrice,
-    entryNote: `Buy stop $0.05 above $${ind.high50d.toFixed(2)} (50-day structural resistance)`,
+    entryNote: `Buy stop above $${ind.high50d.toFixed(2)} (50-day structural resistance + ATR buffer)`,
     stopNote: stopLabel,
     conditions: [
       { label: "50d Breakout", met: breakoutConfirmed },
@@ -546,9 +627,9 @@ export function scoreEMAPullback(
   if (ind.rsRising) score += 1;
 
   // AC-004: Downside Gate (suppress in bearish regime)
-  if (!ind.isAboveMa50) score -= 2; 
+  if (!ind.isAboveMa50) score -= 2;
 
-  const entryPrice = latest.high + 0.05;
+  const entryPrice = latest.high + Math.max(ind.atr14 * 0.10, 0.01);
   const minBuffer = 0.10; // AC-011
   const emaStop = ind.ema8 > 0 ? ind.ema8 * 0.985 : null;
   const swingStop = ind.recentSwingLow !== null && ind.atr14 > 0
@@ -634,9 +715,9 @@ export function scoreMeanReversion(
   if (ind.isHigherLows) score += 1;
 
   // AC-006: Death Cross Gate (prevent entry into severe downtrends)
-  if (ind.ma20 < ind.ma50) score -= 3; 
+  if (ind.ma20 < ind.ma50) score -= 3;
 
-  const entryPrice = latest.high + 0.05;
+  const entryPrice = latest.high + Math.max(ind.atr14 * 0.10, 0.01);
   const minBuffer = 0.10; // AC-011
   // Technical stop: recent swing low − 1× ATR (wider buffer for volatile mean-reversion names)
   const stopPrice = Math.min(
@@ -708,7 +789,7 @@ export function scoreETFRotation(
   if (ind.rsMakingNewHigh) score += 1;
   if (ind.trendStructureIntact) score += 1;
 
-  const entryPrice = latest.close + 0.10;
+  const entryPrice = latest.close + Math.max(ind.atr14 * 0.10, 0.01);
   // Technical stop: close below MA20 = rotation thesis failed
   const stopPrice = ind.ma20 > 0 ? ind.ma20 * 0.99 : latest.low;
   const stopLabel = ind.ma20 > 0
@@ -803,12 +884,18 @@ export function validateSignal(
     notes.push(`✓ Stop is ${(riskPct * 100).toFixed(1)}% below entry — valid risk`);
   }
 
-  // ── R:R feasibility: 3:1 target vs 52w high (informational; hard gate handles blocking) ───
-  const target = entryPrice + 3 * (entryPrice - stopPrice);
-  if (high52w > 0 && target > high52w * 1.05) {
-    notes.push(`✗ 3:1 target $${target.toFixed(2)} exceeds 52w high $${high52w.toFixed(2)} — hard resistance overhead`);
+  // ── R:R feasibility: structural target (52w high) vs minimum 2.0:1 ───────────
+  const risk = entryPrice - stopPrice;
+  if (high52w > 0 && risk > 0) {
+    const structTarget = high52w;
+    const rrAchievable = (structTarget - entryPrice) / risk;
+    if (rrAchievable >= 2.0) {
+      notes.push(`✓ Structural target $${structTarget.toFixed(2)} achievable (${rrAchievable.toFixed(1)}:1 R:R)`);
+    } else {
+      notes.push(`✗ Structural target $${structTarget.toFixed(2)} only ${rrAchievable.toFixed(1)}:1 — below 2.0:1 minimum`);
+    }
   } else {
-    notes.push(`✓ 3:1 target $${target.toFixed(2)} is achievable within price history`);
+    notes.push("✓ Structural target check skipped — no 52w high data");
   }
 
   // ── Data freshness ──────────────────────────────────────────────────────────
@@ -912,13 +999,13 @@ export function evaluateHardGates(
   high52w: number,
   sectorEtfAboveMA20: boolean,
   volPriceConfirmed: boolean,
-  latestClose: number = 0
+  latestClose: number = 0,
+  rrAchievable: number = 3.0
 ): HardGates {
-  const target = entryPrice + 3 * (entryPrice - stopPrice);
   return {
     rsiOverheated: ind.rsi14 > 78,
     bbExtended: ind.bbPct > 0.90,
-    targetBlocked: high52w > 0 && target > high52w,
+    rrBelowMinimum: rrAchievable < 2.0,
     sectorWeak: !sectorEtfAboveMA20,
     volPriceUnconfirmed: !volPriceConfirmed,
     deathCross: ind.ma20 > 0 && ind.ma50 > 0 && ind.ma20 < ind.ma50,
@@ -951,26 +1038,37 @@ function assignTier(
   hardGates: HardGates,
   latestClose: number,
   ema8: number,
-  rsVsSpyNegativeStreak: number
+  rsVsSpyNegativeStreak: number,
+  regime: MarketRegime = "choppy",
+  rrAchievable: number = 3.0
 ): SignalTier {
   // 1. EXIT
   if (latestClose < ema8 && rsVsSpyNegativeStreak >= 3) return "EXIT";
-  // 2. WATCH_EXTENDED — overheated or death cross (structurally bearish)
-  if (hardGates.rsiOverheated || hardGates.bbExtended || hardGates.deathCross) return "WATCH_EXTENDED";
+  // 2. R:R below minimum — send to OBSERVE regardless of conviction
+  if (hardGates.rrBelowMinimum) return "OBSERVE";
+  // 3. WATCH_EXTENDED — overheated only (RSI/BB extended = momentum stretched)
+  if (hardGates.rsiOverheated || hardGates.bbExtended) return "WATCH_EXTENDED";
+  // 3b. deathCross → OBSERVE (structural downtrend ≠ overheated; avoids dual-section bug)
+  if (hardGates.deathCross) return "OBSERVE";
   const anyHardGateFailed =
     hardGates.rsiOverheated ||
     hardGates.bbExtended ||
-    hardGates.targetBlocked ||
+    hardGates.rrBelowMinimum ||
     hardGates.sectorWeak ||
     hardGates.volPriceUnconfirmed ||
     hardGates.deathCross ||
     hardGates.belowMA50;
-  // 3. HIGH_CONVICTION
-  if (convictionScore > 82 && !anyHardGateFailed) return "HIGH_CONVICTION";
-  // 4. TACTICAL_BUY
-  if (convictionScore >= 70 && convictionScore <= 81) return "TACTICAL_BUY";
-  if (convictionScore > 82 && anyHardGateFailed) return "TACTICAL_BUY";
-  // 5. OBSERVE
+  // Regime-modulated HIGH_CONVICTION threshold
+  const highConvThreshold = regime === "bear" ? 90 : regime === "choppy" ? 75 : 82;
+  // Bear regime also requires stronger R:R
+  const bearRRFailed = regime === "bear" && rrAchievable < 3.0;
+  // 4. HIGH_CONVICTION
+  if (convictionScore > highConvThreshold && !anyHardGateFailed && !bearRRFailed) return "HIGH_CONVICTION";
+  // 5. TACTICAL_BUY — conviction in healthy zone or gates block HIGH_CONVICTION
+  const tacticalMin = regime === "bear" ? 82 : 70;
+  if (convictionScore >= tacticalMin && convictionScore <= highConvThreshold) return "TACTICAL_BUY";
+  if (convictionScore > highConvThreshold && (anyHardGateFailed || bearRRFailed)) return "TACTICAL_BUY";
+  // 6. OBSERVE
   return "OBSERVE";
 }
 
@@ -998,6 +1096,8 @@ export function computeNbaDirective({
   stopPrice,
   livePrice,
   ema8,
+  structuralTarget,
+  trailMode,
 }: {
   mlScorePct: number | null;
   mlPercentileRank: number | null;
@@ -1009,6 +1109,8 @@ export function computeNbaDirective({
   stopPrice: number;
   livePrice: number;
   ema8: number;
+  structuralTarget?: number;
+  trailMode?: boolean;
 }): { directive: NbaDirective; reason: string } {
   // EXIT always takes priority
   if (tier === "EXIT") {
@@ -1044,10 +1146,11 @@ export function computeNbaDirective({
     reason = `Mixed signals — ML ${ml}%, conviction ${convictionScore}`;
   }
 
-  // HARVEST: conviction high, price within 5% below target OR already above it (up to 10% past),
+  // HARVEST: conviction high, price within 5% below structural target OR already above it (up to 10% past),
   // AND ML fading — take profit before momentum exhausts.
-  if (convictionScore > 85 && entryPrice > 0 && stopPrice > 0 && livePrice > 0) {
-    const target = entryPrice + 3 * (entryPrice - stopPrice);
+  // Skip in trail mode: structuralTarget is the trail stop (below livePrice), not a price ceiling.
+  if (!trailMode && convictionScore > 85 && entryPrice > 0 && stopPrice > 0 && livePrice > 0) {
+    const target = structuralTarget ?? (entryPrice + 3 * (entryPrice - stopPrice));
     const distToTarget = target > 0 ? (target - livePrice) / target : 1;
     // distToTarget: positive = below target, negative = above target
     // window: -0.10 to +0.05 (up to 10% past target, or within 5% of it)
@@ -1113,11 +1216,19 @@ export function buildSignal(
 
   const volPriceConfirmed = computeVolPriceConfirmed(bars, ind.volumeRatio);
   const latestClose = bars.length > 0 ? bars[bars.length - 1].close : 0;
-  const hardGates = evaluateHardGates(ind, entryPrice, stopPrice, high52w, sectorEtfAboveMA20, volPriceConfirmed, latestClose);
+  // Structural target + achievable R:R (replaces hardcoded 3:1)
+  const { target: structuralTarget, rrRatio: rrAchievable, mode: targetMode } =
+    computeStructuralTarget(entryPrice, stopPrice, high52w, latestClose, ind.atr14, ind.ema8);
+  const trailMode = targetMode === "trail";
+  // ADX-based regime
+  const { regime } = computeADX(bars);
+  const hardGates = evaluateHardGates(
+    ind, entryPrice, stopPrice, high52w, sectorEtfAboveMA20, volPriceConfirmed, latestClose, rrAchievable
+  );
   const rsVsSpyNegativeStreak = spyBars.length >= 23 && bars.length >= 23
     ? computeRsVsSpyNegativeStreak(bars, spyBars)
     : 0;
-  const tier = assignTier(convictionScore, hardGates, latestClose, ind.ema8, rsVsSpyNegativeStreak);
+  const tier = assignTier(convictionScore, hardGates, latestClose, ind.ema8, rsVsSpyNegativeStreak, regime, rrAchievable);
 
   return {
     ticker, score, strength, strategy, indicators: ind,
@@ -1130,5 +1241,9 @@ export function buildSignal(
     rsiAtEntry: ind.rsi14,
     bbPct: ind.bbPct,
     rsVsSpyNegativeStreak,
+    structuralTarget,
+    rrAchievable,
+    trailMode,
+    regime,
   };
 }

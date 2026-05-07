@@ -83,6 +83,11 @@ interface SignalCardProps {
   // Phase C: NBA directive
   nbaDirective?: NbaDirective;
   nbaDirectiveReason?: string;
+  // Dynamic structural trade setup
+  structuralTarget?: number;
+  rrAchievable?: number;
+  trailMode?: boolean;
+  regime?: "bull" | "bear" | "choppy";
   // Phase 3: position tracking
   inPosition?: boolean;
   openTradeCount?: number;
@@ -164,7 +169,7 @@ function tierBadge(tier?: SignalTier) {
 const GATE_LABELS: Record<string, string> = {
   rsiOverheated: "RSI overheated (>78)",
   bbExtended: "BB extended (>90%)",
-  targetBlocked: "Target > 52w high",
+  rrBelowMinimum: "R:R below 2.0:1 minimum",
   sectorWeak: "Sector below MA20",
   volPriceUnconfirmed: "No vol-price confirmation",
   deathCross: "Death cross (MA20 < MA50)",
@@ -214,6 +219,7 @@ export default function SignalCard({
   tier, hardGates, ema8,
   streakDays, mlDelta24h, streakDirection,
   nbaDirective, nbaDirectiveReason,
+  structuralTarget, rrAchievable, trailMode, regime,
   inPosition, openTradeCount = 0, openTradeId, onTradeLogged,
 }: SignalCardProps) {
   const [modalOpen, setModalOpen] = useState(false);
@@ -282,7 +288,9 @@ export default function SignalCard({
   const changeSign = changePositive ? "+" : "";
 
   const risk = entryPrice > 0 && stopPrice > 0 ? Math.abs(entryPrice - stopPrice) : null;
-  const targetPrice = entryPrice && risk ? entryPrice + 3 * risk : null;
+  // Use structural target from backend (52w high or trail stop); fall back to 3:1 for legacy data
+  const targetPrice = structuralTarget ?? (entryPrice && risk ? entryPrice + 3 * risk : null);
+  const displayRR = rrAchievable ?? (risk && entryPrice && targetPrice ? (targetPrice - entryPrice) / risk : null);
   const earningsWarning = sa?.earningsDays !== null && sa?.earningsDays !== undefined && sa.earningsDays <= 7;
 
   const legacyBadge = signalBadge(strength);
@@ -299,7 +307,7 @@ export default function SignalCard({
 
   // Tactical Buy: pick the most important fired gate (priority order)
   const tacticalGatePriority: (keyof HardGates)[] = [
-    "targetBlocked",
+    "rrBelowMinimum",
     "volPriceUnconfirmed",
     "sectorWeak",
     "rsiOverheated",
@@ -309,8 +317,10 @@ export default function SignalCard({
 
   const tacticalGateFooter = (g?: keyof HardGates): string | null => {
     switch (g) {
-      case "targetBlocked":
-        return "consider a half position — the price target sits above the 52-week high, which is a common resistance level. watch for a strong breakout candle above it before sizing up.";
+      case "rrBelowMinimum":
+        return "the 52-week high is too close to the entry to give a 2:1 reward-to-risk ratio. wait for a deeper pullback or a confirmed breakout above the 52-week high before entering.";
+      case "deathCross":
+        return "the 20-day moving average has crossed below the 50-day — a confirmed downtrend. this stock needs time to recover. wait for the MA20 to cross back above the MA50 before considering entry.";
       case "volPriceUnconfirmed":
         return "volume didn't confirm the price move today. wait for a session where both volume and price range expand together before entering.";
       case "sectorWeak":
@@ -703,7 +713,7 @@ export default function SignalCard({
                 </MetricTile>
                 <MetricTile
                   label="Validation"
-                  tip="✅ Server-side checks: no conflicting indicators, stop within 8% of entry, 3:1 target achievable, data is fresh. All pass = validated setup."
+                  tip="✅ Server-side checks: no conflicting indicators, stop within 8% of entry, structural target achievable (≥2.0:1 R:R), data is fresh. All pass = validated setup."
                   activeTip={activeTip}
                   setActiveTip={setActiveTip}
                 >
@@ -801,21 +811,33 @@ export default function SignalCard({
                 <p className="text-xs font-medium text-[#43ed9e]">▲ {entryNote}</p>
                 <p className="text-xs font-medium text-[#ffb3ae]">▼ {stopNote}</p>
                 {risk && targetPrice && (
-                  <p className="text-[10px] text-[#bacbbd] pt-1 border-t border-[#3c4a40]/20 flex items-center gap-1.5">
-                    <span>R:R {((targetPrice - entryPrice) / risk).toFixed(1)}:1 · Target ${targetPrice.toFixed(2)}</span>
-                    {hardGates && (hardGates.targetBlocked ? (
-                      <span
-                        className="text-[#ffb3ae]"
-                        title="Resistance Alert: Target requires breaking 52-week high"
-                        aria-label="Resistance alert"
-                      >⚠</span>
+                  <p className="text-[10px] text-[#bacbbd] pt-1 border-t border-[#3c4a40]/20 flex items-center gap-1.5 flex-wrap">
+                    {trailMode ? (
+                      <>
+                        <span className="text-[#adc6ff]">Trail active</span>
+                        <span>· Trail stop ${targetPrice.toFixed(2)}</span>
+                        <span
+                          className="text-[#adc6ff]"
+                          title="ATH breakout: target replaced with trailing stop (1.5× ATR / 8 EMA). Hold until price crosses below the trail line."
+                        >↗ ATH</span>
+                      </>
                     ) : (
-                      <span
-                        className="text-[#43ed9e]"
-                        title="Clear Sky: No major resistance to target"
-                        aria-label="Clear path to target"
-                      >🛡</span>
-                    ))}
+                      <>
+                        <span>R:R {displayRR !== null && displayRR > 0 ? `${displayRR.toFixed(1)}:1` : "—"} · Target ${targetPrice.toFixed(2)}</span>
+                        {hardGates?.rrBelowMinimum ? (
+                          <span className="text-[#ffb3ae]" title="R:R below 2.0:1 minimum — structural target too close">⚠</span>
+                        ) : (
+                          <span className="text-[#43ed9e]" title="Structural target achievable (≥2.0:1 R:R)">🛡</span>
+                        )}
+                      </>
+                    )}
+                    {regime && (
+                      <span className={`ml-1 px-1 rounded text-[9px] font-semibold uppercase ${
+                        regime === "bull" ? "bg-[#43ed9e]/15 text-[#43ed9e]"
+                        : regime === "bear" ? "bg-[#ffb3ae]/15 text-[#ffb3ae]"
+                        : "bg-[#ffb33c]/15 text-[#ffb33c]"
+                      }`}>{regime}</span>
+                    )}
                   </p>
                 )}
               </div>

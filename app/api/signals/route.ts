@@ -89,6 +89,8 @@ export async function GET() {
         stopPrice: signal.stopPrice,
         livePrice: quote.price,
         ema8: signal.indicators.ema8,
+        structuralTarget: signal.structuralTarget,
+        trailMode: signal.trailMode,
       });
       return {
         ...signal,

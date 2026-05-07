@@ -101,6 +101,11 @@ interface SignalData {
   // Phase C: NBA directive
   nbaDirective?: NbaDirective;
   nbaDirectiveReason?: string;
+  // Dynamic structural trade setup
+  structuralTarget?: number;
+  rrAchievable?: number;
+  trailMode?: boolean;
+  regime?: "bull" | "bear" | "choppy";
 }
 
 interface DashboardData {
@@ -211,7 +216,8 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
         .filter((t) => {
           const live = prices[t.ticker]?.price;
           if (!live || !t.stop_price || t.stop_price >= t.entry_price) return false;
-          const target = t.entry_price + 3 * (t.entry_price - t.stop_price);
+          // Use 2:1 minimum as harvest-alert threshold (structural target not stored on trade)
+          const target = t.entry_price + 2 * (t.entry_price - t.stop_price);
           return live >= target;
         })
         .map((t) => t.ticker);
