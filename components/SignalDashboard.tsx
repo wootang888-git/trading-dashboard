@@ -337,8 +337,9 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
   // Overheated — Wait
   const watchExtended = data.signals.filter((s) => s.tier === "WATCH_EXTENDED");
   // Not Yet — OBSERVE tier + WATCH + OBSERVE_WARN directives; EXIT cards float to top
+  // Exclude WATCH_EXTENDED (already shown in Overheated — Wait section)
   const notYet = data.signals
-    .filter((s) => s.tier === "OBSERVE" || s.nbaDirective === "WATCH" || s.nbaDirective === "OBSERVE_WARN")
+    .filter((s) => s.tier !== "WATCH_EXTENDED" && (s.tier === "OBSERVE" || s.nbaDirective === "WATCH" || s.nbaDirective === "OBSERVE_WARN"))
     .sort((a, b) => (a.nbaDirective === "EXIT" ? -1 : b.nbaDirective === "EXIT" ? 1 : 0));
   // EXIT-tier cards merge into notYet (no standalone Exit Now section)
   const exitCards = data.signals.filter((s) => s.tier === "EXIT");
