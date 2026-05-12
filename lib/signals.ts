@@ -44,6 +44,9 @@ export interface Indicators {
   bbLower: number;
   bbWidth: number;
   bbPct: number;
+  // Phase 2: Per-stock RSI percentile (0–1) over trailing 126-bar window.
+  // -1 = insufficient history; fall back to universal threshold in gate logic.
+  rsiPercentile: number;
 }
 
 export interface Condition {
@@ -122,6 +125,38 @@ function calcRSI(bars: HistoricalBar[], period = 14): number {
   const avgLoss = losses / period;
   if (avgLoss === 0) return 100;
   return 100 - 100 / (1 + avgGain / avgLoss);
+}
+
+/** Rolling RSI series using Wilder's O(n) smoothing.
+ *  Returns one RSI value per bar starting at index `period` (length = bars.length - period).
+ *  Requires bars.length >= period + 1. */
+function calcRSIHistory(bars: HistoricalBar[], period = 14): number[] {
+  if (bars.length < period + 1) return [];
+  const result: number[] = [];
+  let avgGain = 0, avgLoss = 0;
+  // Seed: simple average over the first window
+  for (let i = 1; i <= period; i++) {
+    const diff = bars[i].close - bars[i - 1].close;
+    if (diff > 0) avgGain += diff; else avgLoss -= diff;
+  }
+  avgGain /= period;
+  avgLoss /= period;
+  result.push(avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss));
+  // Wilder's smoothing for the remaining bars
+  for (let i = period + 1; i < bars.length; i++) {
+    const diff = bars[i].close - bars[i - 1].close;
+    avgGain = (avgGain * (period - 1) + (diff > 0 ? diff : 0)) / period;
+    avgLoss = (avgLoss * (period - 1) + (diff < 0 ? -diff : 0)) / period;
+    result.push(avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss));
+  }
+  return result;
+}
+
+/** Returns the fraction of values in `history` that are <= `value` (0–1).
+ *  Excludes the current bar's value from the distribution to avoid look-ahead bias. */
+function computeRsiPercentile(history: number[], value: number): number {
+  if (history.length === 0) return -1;
+  return history.filter(v => v <= value).length / history.length;
 }
 
 function calcMA(bars: HistoricalBar[], period: number): number {
@@ -372,6 +407,7 @@ export function computeIndicators(
     obv20High: false, high50d: 0, bbSqueeze: false, macdAccelerating: false,
     macdAccel2d: false, rsiCross62: false,
     bbUpper: 0, bbLower: 0, bbWidth: 0, bbPct: 0.5,
+    rsiPercentile: -1,
   };
   if (bars.length === 0) return zero;
 
@@ -468,6 +504,18 @@ export function computeIndicators(
     }
   }
 
+  // Phase 2: Per-stock RSI percentile — self-calibrating overheated threshold.
+  // Use a 126-bar (≈6-month) window. Needs 126+14 bars; returns -1 otherwise.
+  // history slice excludes the current bar to avoid look-ahead bias.
+  const RSI_HISTORY_WINDOW = 126;
+  let rsiPercentile = -1;
+  if (bars.length >= RSI_HISTORY_WINDOW + 14) {
+    const windowBars = bars.slice(-(RSI_HISTORY_WINDOW + 14));
+    const rsiHistory = calcRSIHistory(windowBars);
+    // rsiHistory.slice(0, -1) = all past RSI values, excluding today's
+    rsiPercentile = computeRsiPercentile(rsiHistory.slice(0, -1), rsi14);
+  }
+
   return {
     rsi14, ma20, ma50, ema8, ema20,
     ema50, emaFanOpen, emaGapWidening,
@@ -484,6 +532,7 @@ export function computeIndicators(
     obv20High, high50d, bbSqueeze, macdAccelerating, macdAccel2d, rsiCross62,
     atr14, macd, macdSignal, macdHist,
     bbUpper, bbLower, bbWidth, bbPct,
+    rsiPercentile,
   };
 }
 
@@ -1019,10 +1068,15 @@ export function evaluateHardGates(
   latestClose: number = 0,
   rrAchievable: number = 3.0
 ): HardGates {
+  // Per-stock RSI percentile gate (Phase 2).
+  // rsiPercentile >= 0 means we have 6-month history — use it as a self-calibrating threshold.
+  // rsiPercentile === -1 means insufficient history — fall back to the universal 78 ceiling.
+  // In both cases the MACD-deceleration condition and 84 absolute ceiling still apply.
+  const rsiStretched = ind.rsiPercentile >= 0
+    ? ind.rsiPercentile > 0.92
+    : ind.rsi14 > 78;
   return {
-    // Momentum-exhaustion gate: RSI stretched AND momentum waning (MACD decelerating), or absolute ceiling of 84.
-    // RSI > 78 alone does not fire during confirmed momentum continuations (MACD still accelerating).
-    rsiOverheated: (ind.rsi14 > 78 && !ind.macdAccelerating) || ind.rsi14 > 84,
+    rsiOverheated: (rsiStretched && !ind.macdAccelerating) || ind.rsi14 > 84,
     bbExtended: ind.bbPct > 0.90,
     rrBelowMinimum: rrAchievable < 2.0,
     sectorWeak: !sectorEtfAboveMA20,
