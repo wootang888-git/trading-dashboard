@@ -327,7 +327,8 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
   }, []);
 
   // Build Position — two sub-groups
-  const scaleInDirective = data.signals.filter((s) => s.nbaDirective === "SCALE_IN");
+  // Exclude BREAKOUT_WATCH — those always receive WATCH directive (no valid entry yet)
+  const scaleInDirective = data.signals.filter((s) => s.nbaDirective === "SCALE_IN" && s.tier !== "BREAKOUT_WATCH");
   const highConvictionDeveloping = data.signals.filter((s) => s.tier === "HIGH_CONVICTION" && s.nbaDirective !== "SCALE_IN");
   const buildPosition = [...scaleInDirective, ...highConvictionDeveloping];
   // Trend Riding — EXIT-directive cards float to top
@@ -336,10 +337,12 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
     .sort((a, b) => (a.nbaDirective === "EXIT" ? -1 : b.nbaDirective === "EXIT" ? 1 : 0));
   // Overheated — Wait
   const watchExtended = data.signals.filter((s) => s.tier === "WATCH_EXTENDED");
+  // Blue Sky — technically sound, R:R blocked by 52w high proximity in bull regime
+  const breakoutWatch = data.signals.filter((s) => s.tier === "BREAKOUT_WATCH");
   // Not Yet — OBSERVE tier + WATCH + OBSERVE_WARN directives; EXIT cards float to top
-  // Exclude WATCH_EXTENDED (already shown in Overheated — Wait section)
+  // Exclude WATCH_EXTENDED and BREAKOUT_WATCH (shown in their own sections)
   const notYet = data.signals
-    .filter((s) => s.tier !== "WATCH_EXTENDED" && (s.tier === "OBSERVE" || s.nbaDirective === "WATCH" || s.nbaDirective === "OBSERVE_WARN"))
+    .filter((s) => s.tier !== "WATCH_EXTENDED" && s.tier !== "BREAKOUT_WATCH" && (s.tier === "OBSERVE" || s.nbaDirective === "WATCH" || s.nbaDirective === "OBSERVE_WARN"))
     .sort((a, b) => (a.nbaDirective === "EXIT" ? -1 : b.nbaDirective === "EXIT" ? 1 : 0));
   // EXIT-tier cards merge into notYet (no standalone Exit Now section)
   const exitCards = data.signals.filter((s) => s.tier === "EXIT");
@@ -526,6 +529,23 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
           <div className="space-y-3">
             {trendRiding.map((s) => (
               <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} inPosition={positionData.has(s.ticker)} openTradeCount={positionData.get(s.ticker)?.count ?? 0} openTradeId={positionData.get(s.ticker)?.count === 1 ? positionData.get(s.ticker)?.ids[0] : undefined} onTradeLogged={loadPositions} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Blue Sky — technically sound, R:R blocked by 52w high proximity in bull regime */}
+      {breakoutWatch.length > 0 && (
+        <section>
+          <h2 className="text-sm font-semibold uppercase tracking-widest mb-1" style={sectionHead("#c084fc")}>
+            BLUE SKY WATCH ({breakoutWatch.length})
+          </h2>
+          <p className="text-[10px] mb-3" style={{ color: "var(--on-surface-variant)" }}>
+            Setup confirmed — waiting for a close above the 52-week high on elevated volume.
+          </p>
+          <div className="space-y-3">
+            {breakoutWatch.map((s) => (
+              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} />
             ))}
           </div>
         </section>

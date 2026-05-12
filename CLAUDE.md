@@ -31,7 +31,12 @@ Three-layer pipeline called by both data paths:
 
 4. **`computeADX(bars, 14)`** — Wilder ADX-based regime classifier. Returns `regime: "bull" | "bear" | "choppy"`. Regime gates: bull ADX>25 & +DI>-DI; bear ADX>25 & -DI>+DI; choppy ADX≤25.
 
-5. **`computeStructuralTarget(entry, stop, high52w, latestClose, atr14, ema8)`** — returns `{ target, rrRatio, mode: "fixed"|"trail" }`. Fixed mode: target = 52w high; trail mode (price ≥ 99.5% of 52w high): target = trailing stop = max(close − 1.5×ATR, ema8). Minimum R:R is **2.0:1**. Gate `rrBelowMinimum` fires when `rrRatio < 2.0` and routes signal to OBSERVE.
+5. **`computeStructuralTarget(entry, stop, high52w, latestClose, atr14, ema8, regime)`** — returns `{ target, rrRatio, mode: "fixed"|"trail" }`. Three modes in priority order:
+   - **Trail mode** (price ≥ 99.5% of 52w high): target = `min(max(close − 1.5×ATR, ema8), close×0.999)` — clamped so trail stop never sits above close (prevents spurious EXIT on ATH entry day).
+   - **ATR projection** (bull regime AND price 94–99.4% of 52w high AND atr14 > 0): target = `close + 2.5×ATR`. R:R computed honestly — not hardcoded. Prevents the 52w high from acting as an upside ceiling for confirmed breakout candidates.
+   - **Fixed mode**: target = 52w high (primary resistance ceiling).
+   Minimum R:R is **2.0:1**. Gate `rrBelowMinimum` fires when `rrRatio < 2.0`. In bull regime with isNear52wHigh + conviction ≥ 70 + no death cross + RSI/BB not extended → routes to **BREAKOUT_WATCH**. Otherwise routes to OBSERVE.
+   `regime` must be computed before this function is called — `computeADX(bars)` runs first in `buildSignal`.
 
 ### Stop / Entry Prices (critical)
 
@@ -64,19 +69,21 @@ Server components must NOT call their own API routes (`fetch('/api/...')`) — V
 
 ### NBA Directive vs Tier — two separate systems
 
-- `tier` (HIGH_CONVICTION, TACTICAL_BUY, WATCH_EXTENDED, OBSERVE, EXIT) — rule-based; conviction score + hard gates
+- `tier` (HIGH_CONVICTION, TACTICAL_BUY, WATCH_EXTENDED, BREAKOUT_WATCH, OBSERVE, EXIT) — rule-based; conviction score + hard gates
 - `nbaDirective` (SCALE_IN, HOLD_TRAIL, HARVEST, WATCH, OBSERVE_WARN, EXIT, NOISE) — action signal; tier + ML score + streak + price vs EMA
 - **Never mix them as the source of truth for the same thing.** Banner pills count by directive; dashboard sections must also filter by directive — otherwise counts visibly mismatch
 - SCALE_IN ≠ HIGH_CONVICTION: SCALE_IN requires Day 3+ AND rising ML delta on top of HIGH_CONVICTION tier
+- BREAKOUT_WATCH always produces `nbaDirective === "WATCH"` — never SCALE_IN. It is explicitly excluded from the Build Position SCALE_IN filter to prevent duplicate cards.
 
 ### Dashboard Section → Filter Mapping
 
 | Section | Filter |
 |---|---|
-| Build Position | Sub-A: `nbaDirective === "SCALE_IN"` / Sub-B: `tier === "HIGH_CONVICTION" && nbaDirective !== "SCALE_IN"` |
+| Build Position | Sub-A: `nbaDirective === "SCALE_IN" && tier !== "BREAKOUT_WATCH"` / Sub-B: `tier === "HIGH_CONVICTION" && nbaDirective !== "SCALE_IN"` |
 | Trend Riding | `nbaDirective === "HOLD_TRAIL"` |
+| Blue Sky Watch | `tier === "BREAKOUT_WATCH"` |
 | Overheated — Wait | `tier === "WATCH_EXTENDED"` |
-| Not Yet | `tier === "OBSERVE" \|\| nbaDirective === "WATCH" \|\| nbaDirective === "OBSERVE_WARN"` + EXIT tier cards pinned to top |
+| Not Yet | `tier !== "WATCH_EXTENDED" && tier !== "BREAKOUT_WATCH" && (tier === "OBSERVE" \|\| nbaDirective === "WATCH" \|\| nbaDirective === "OBSERVE_WARN")` + EXIT tier cards pinned to top |
 
 No standalone "Exit Now" section — EXIT cards float to top of "Not Yet" via sort. HARVEST is card-level only (gold pill), not a section. Banner pill "Scale In" count = SCALE_IN directive length.
 

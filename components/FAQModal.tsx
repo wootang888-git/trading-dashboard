@@ -340,6 +340,13 @@ export default function FAQModal({ open, onClose, mode = "conviction", mlScore, 
                 },
                 {
                   range: "any",
+                  label: "Blue Sky Watch",
+                  color: "text-[#c084fc]",
+                  bg: "bg-[#c084fc]/10",
+                  desc: "The trend is confirmed and the setup is technically sound, but the stock is within 6% of its 52-week high — too close for a standard 2:1 reward-to-risk entry. Watch for a confirmed close above the 52-week high on elevated volume (≥1.5× average). That close is the blue sky breakout trigger. Two consecutive confirming closes = SCALE IN.",
+                },
+                {
+                  range: "any",
                   label: "Not Yet",
                   color: "text-[#c8a84b]",
                   bg: "bg-[#c8a84b]/10",
@@ -369,9 +376,9 @@ export default function FAQModal({ open, onClose, mode = "conviction", mlScore, 
             </p>
             <div className="space-y-2.5">
               {[
-                { label: "RSI Overheated", desc: "RSI 14 above 78 — momentum stretched, entry risk of immediate pullback." },
+                { label: "RSI Overheated", desc: "RSI 14 above 78 with MACD momentum fading (decelerating histogram), or RSI above 84 regardless of MACD. A rising RSI with an accelerating MACD is a momentum continuation — this gate only fires when the move is both stretched AND losing steam." },
                 { label: "BB Extended", desc: "Bollinger Band %B above 90% — price hugging upper band, mean reversion likely." },
-                { label: "R:R Below Minimum", desc: "The 52-week high is too close to the entry price to achieve a 2.0:1 reward-to-risk ratio. Signal moves to Observe until the setup improves." },
+                { label: "R:R Below Minimum", desc: "The achievable reward-to-risk ratio is below 2.0:1. In a Bull regime, the target is projected using ATR extension rather than the 52-week high ceiling — so this gate only fires when the setup is genuinely constrained, not just close to a prior high. A technically sound setup near the 52-week high in a Bull regime is routed to Blue Sky Watch instead of Observe." },
                 { label: "Death Cross", desc: "The 20-day moving average has crossed below the 50-day. This is a structural downtrend signal — not a timing issue. The stock needs the trend to reverse before entry is valid." },
                 { label: "Sector Weak", desc: "Sector ETF closes below its 20-day moving average. Industry tide is against the trade." },
                 { label: "Vol-Price Unconfirmed", desc: "Volume <1.5× average OR daily range <1.2× recent. Move lacks institutional conviction." },

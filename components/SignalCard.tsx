@@ -139,12 +139,13 @@ function signalBadge(strength: string) {
 // Tier color for ticker symbol and avatar tint
 function tierColor(tier?: SignalTier): string {
   switch (tier) {
-    case "HIGH_CONVICTION": return "#43ed9e";
-    case "TACTICAL_BUY":   return "#adc6ff";
-    case "WATCH_EXTENDED": return "#ffb33c";
-    case "OBSERVE":        return "#ffb3ae";
-    case "EXIT":           return "#ffb3ae";
-    default:               return "#dde3ec";
+    case "HIGH_CONVICTION":  return "#43ed9e";
+    case "TACTICAL_BUY":    return "#adc6ff";
+    case "WATCH_EXTENDED":  return "#ffb33c";
+    case "BREAKOUT_WATCH":  return "#c084fc";
+    case "OBSERVE":         return "#ffb3ae";
+    case "EXIT":            return "#ffb3ae";
+    default:                return "#dde3ec";
   }
 }
 
@@ -157,6 +158,8 @@ function tierBadge(tier?: SignalTier) {
       return { label: "TACTICAL BUY", cls: "bg-[#adc6ff]/15 text-[#adc6ff] border border-[#adc6ff]/30" };
     case "WATCH_EXTENDED":
       return { label: "EXTENDED", cls: "bg-[#ffb33c]/15 text-[#ffb33c] border border-[#ffb33c]/30" };
+    case "BREAKOUT_WATCH":
+      return { label: "BLUE SKY", cls: "bg-[#c084fc]/15 text-[#c084fc] border border-[#c084fc]/30" };
     case "OBSERVE":
       return { label: "OBSERVE", cls: "bg-[#c8a84b]/15 text-[#c8a84b] border border-[#c8a84b]/30" };
     case "EXIT":
@@ -167,7 +170,7 @@ function tierBadge(tier?: SignalTier) {
 }
 
 const GATE_LABELS: Record<string, string> = {
-  rsiOverheated: "RSI overheated (>78)",
+  rsiOverheated: "RSI overheated (>78, momentum fading)",
   bbExtended: "BB extended (>90%)",
   rrBelowMinimum: "R:R below 2.0:1 minimum",
   sectorWeak: "Sector below MA20",
@@ -291,7 +294,7 @@ export default function SignalCard({
   // Use structural target from backend (52w high or trail stop); fall back to 3:1 for legacy data
   const targetPrice = structuralTarget ?? (entryPrice && risk ? entryPrice + 3 * risk : null);
   const displayRR = rrAchievable ?? (risk && entryPrice && targetPrice ? (targetPrice - entryPrice) / risk : null);
-  const earningsWarning = sa?.earningsDays !== null && sa?.earningsDays !== undefined && sa.earningsDays <= 7;
+  const earningsWarning = sa?.earningsDays !== null && sa?.earningsDays !== undefined && sa.earningsDays <= 14;
 
   const legacyBadge = signalBadge(strength);
   const tBadge = tierBadge(tier);
@@ -347,6 +350,8 @@ export default function SignalCard({
           : "don't buy yet — this stock has moved too far, too fast. wait for it to pull back to the 8-day average.";
       case "EXIT":
         return "Close or reduce your position. This setup has broken down.";
+      case "BREAKOUT_WATCH":
+        return "Technically sound — watch for a confirmed close above the 52-week high on elevated volume. That triggers the blue sky breakout.";
       case "OBSERVE":
       default:
         return null;
@@ -724,8 +729,8 @@ export default function SignalCard({
               </div>
             )}
 
-            {/* Why not High Conviction? — gate reasons for TACTICAL_BUY and WATCH_EXTENDED */}
-            {(tier === "TACTICAL_BUY" || tier === "WATCH_EXTENDED") && firedGates.length > 0 && (
+            {/* Why not High Conviction? — gate reasons for TACTICAL_BUY, WATCH_EXTENDED, and BREAKOUT_WATCH */}
+            {(tier === "TACTICAL_BUY" || tier === "WATCH_EXTENDED" || tier === "BREAKOUT_WATCH") && firedGates.length > 0 && (
               <div className="mb-3 rounded-lg bg-[#0e141a] px-2.5 py-2">
                 <p className="text-[10px] text-[#bacbbd]/60 uppercase tracking-widest mb-1.5">
                   What&apos;s holding it back:

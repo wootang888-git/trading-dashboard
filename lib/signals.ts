@@ -64,10 +64,11 @@ export type SignalTier =
   | "TACTICAL_BUY"
   | "WATCH_EXTENDED"
   | "OBSERVE"
-  | "EXIT";
+  | "EXIT"
+  | "BREAKOUT_WATCH";
 
 export interface HardGates {
-  rsiOverheated: boolean;       // RSI > 78
+  rsiOverheated: boolean;       // RSI > 78 AND MACD decelerating (or RSI > 84 absolute ceiling)
   bbExtended: boolean;          // bbPct > 0.90
   rrBelowMinimum: boolean;      // achievable R:R < 2.0 (structural target too close)
   sectorWeak: boolean;          // sectorEtf.close < sectorEtf.ma20
@@ -211,24 +212,38 @@ function computeADX(bars: HistoricalBar[], period = 14): {
 }
 
 /** Computes structural target (nearest resistance ceiling) and achievable R:R.
- *  Switches to trail mode (returns trailing stop level) when price is at/above 52w high. */
+ *  Switches to trail mode when price is at/above 52w high.
+ *  In bull regime, near-52w-high stocks use ATR projection instead of the 52w ceiling,
+ *  keeping R:R honest for breakout candidates rather than capping upside at the historical high. */
 function computeStructuralTarget(
   entryPrice: number,
   stopPrice: number,
   high52w: number,
   latestClose: number,
   atr14: number,
-  ema8: number
+  ema8: number,
+  regime: MarketRegime = "choppy"
 ): { target: number; rrRatio: number; mode: "fixed" | "trail" } {
   const risk = entryPrice - stopPrice;
   if (risk <= 0 || entryPrice <= 0) return { target: entryPrice, rrRatio: 0, mode: "fixed" };
   // ATH breakout: price within 0.5% of or above 52w high → trail mode
   if (high52w > 0 && latestClose >= high52w * 0.995) {
-    const trailStop = Math.max(
+    const rawTrailStop = Math.max(
       latestClose - 1.5 * atr14,
       ema8 > 0 ? ema8 : latestClose * 0.97
     );
+    // Clamp: trail stop must sit below latestClose so the trail-breach EXIT override
+    // (`latestClose < structuralTarget`) can never fire on the day trail mode activates.
+    const trailStop = Math.min(rawTrailStop, latestClose * 0.999);
     return { target: trailStop, rrRatio: 3.0, mode: "trail" };
+  }
+  // Bull regime + within 6% of 52w high → project forward with ATR extension.
+  // 52w high acts as a ceiling in fixed mode; for confirmed breakout candidates the
+  // true forward target is beyond it. 2.5×ATR projects a realistic post-breakout move.
+  if (regime === "bull" && high52w > 0 && latestClose >= high52w * 0.94 && atr14 > 0) {
+    const projectedTarget = latestClose + 2.5 * atr14;
+    const achievableRR = (projectedTarget - entryPrice) / risk;
+    return { target: projectedTarget, rrRatio: achievableRR, mode: "fixed" };
   }
   // Structural target = 52w high (primary resistance ceiling)
   if (high52w > 0) {
@@ -388,10 +403,12 @@ export function computeIndicators(
   const bbSqueeze = bbWidth < avgBbWidth;
 
   // Precision: MACD Acceleration (Impulse detection)
-  const prevMacd = bars.length >= 2 ? calcMACD(bars.slice(0, -1)) : { hist: 0 };
-  const macdAccelerating = macdHist > prevMacd.hist;
-  const prevPrevMacd = bars.length >= 3 ? calcMACD(bars.slice(0, -2)) : { hist: 0 };
-  const macdAccel2d = macdHist > prevMacd.hist && prevMacd.hist > prevPrevMacd.hist;
+  // Require >= 27 bars so prevMacd is computed from a full-length MACD series (26 bars min),
+  // not a zero-seeded stub that forces macdAccelerating = true and silently disables the RSI gate.
+  const prevMacd = bars.length >= 27 ? calcMACD(bars.slice(0, -1)) : { hist: 0 };
+  const macdAccelerating = bars.length >= 27 && macdHist > prevMacd.hist;
+  const prevPrevMacd = bars.length >= 28 ? calcMACD(bars.slice(0, -2)) : { hist: 0 };
+  const macdAccel2d = bars.length >= 28 && macdHist > prevMacd.hist && prevMacd.hist > prevPrevMacd.hist;
 
   // Precision: RSI cross above 62 from below (fresh power-zone entry)
   const prevRsi = bars.length >= 2 ? calcRSI(bars.slice(0, -1)) : rsi14;
@@ -1003,7 +1020,9 @@ export function evaluateHardGates(
   rrAchievable: number = 3.0
 ): HardGates {
   return {
-    rsiOverheated: ind.rsi14 > 78,
+    // Momentum-exhaustion gate: RSI stretched AND momentum waning (MACD decelerating), or absolute ceiling of 84.
+    // RSI > 78 alone does not fire during confirmed momentum continuations (MACD still accelerating).
+    rsiOverheated: (ind.rsi14 > 78 && !ind.macdAccelerating) || ind.rsi14 > 84,
     bbExtended: ind.bbPct > 0.90,
     rrBelowMinimum: rrAchievable < 2.0,
     sectorWeak: !sectorEtfAboveMA20,
@@ -1040,12 +1059,24 @@ function assignTier(
   ema8: number,
   rsVsSpyNegativeStreak: number,
   regime: MarketRegime = "choppy",
-  rrAchievable: number = 3.0
+  rrAchievable: number = 3.0,
+  isNear52wHigh: boolean = false
 ): SignalTier {
   // 1. EXIT
   if (latestClose < ema8 && rsVsSpyNegativeStreak >= 3) return "EXIT";
-  // 2. R:R below minimum — send to OBSERVE regardless of conviction
-  if (hardGates.rrBelowMinimum) return "OBSERVE";
+  // 2. R:R below minimum — BREAKOUT_WATCH in bull regime when technicals are sound;
+  //    otherwise OBSERVE.
+  if (hardGates.rrBelowMinimum) {
+    if (
+      regime === "bull" &&
+      isNear52wHigh &&
+      convictionScore >= 70 &&
+      !hardGates.deathCross &&
+      !hardGates.rsiOverheated &&
+      !hardGates.bbExtended
+    ) return "BREAKOUT_WATCH";
+    return "OBSERVE";
+  }
   // 3. WATCH_EXTENDED — overheated only (RSI/BB extended = momentum stretched)
   if (hardGates.rsiOverheated || hardGates.bbExtended) return "WATCH_EXTENDED";
   // 3b. deathCross → OBSERVE (structural downtrend ≠ overheated; avoids dual-section bug)
@@ -1115,6 +1146,11 @@ export function computeNbaDirective({
   // EXIT always takes priority
   if (tier === "EXIT") {
     return { directive: "EXIT", reason: "Thesis failed — price below 8-EMA with sustained SPY underperformance" };
+  }
+  // BREAKOUT_WATCH: confirmed trend, R:R blocked by 52w high proximity.
+  // Always WATCH — never promote to SCALE_IN (no valid entry yet, awaiting 52w high break).
+  if (tier === "BREAKOUT_WATCH") {
+    return { directive: "WATCH", reason: "Blue sky setup — wait for confirmed close above 52-week high on elevated volume" };
   }
 
   const ml = mlScorePct ?? 0;
@@ -1216,19 +1252,24 @@ export function buildSignal(
 
   const volPriceConfirmed = computeVolPriceConfirmed(bars, ind.volumeRatio);
   const latestClose = bars.length > 0 ? bars[bars.length - 1].close : 0;
+  // ADX-based regime must be computed first — used by computeStructuralTarget for ATR projection
+  const { regime } = computeADX(bars);
   // Structural target + achievable R:R (replaces hardcoded 3:1)
   const { target: structuralTarget, rrRatio: rrAchievable, mode: targetMode } =
-    computeStructuralTarget(entryPrice, stopPrice, high52w, latestClose, ind.atr14, ind.ema8);
+    computeStructuralTarget(entryPrice, stopPrice, high52w, latestClose, ind.atr14, ind.ema8, regime);
   const trailMode = targetMode === "trail";
-  // ADX-based regime
-  const { regime } = computeADX(bars);
   const hardGates = evaluateHardGates(
     ind, entryPrice, stopPrice, high52w, sectorEtfAboveMA20, volPriceConfirmed, latestClose, rrAchievable
   );
   const rsVsSpyNegativeStreak = spyBars.length >= 23 && bars.length >= 23
     ? computeRsVsSpyNegativeStreak(bars, spyBars)
     : 0;
-  const tier = assignTier(convictionScore, hardGates, latestClose, ind.ema8, rsVsSpyNegativeStreak, regime, rrAchievable);
+  const rawTier = assignTier(
+    convictionScore, hardGates, latestClose, ind.ema8,
+    rsVsSpyNegativeStreak, regime, rrAchievable, ind.isNear52wHigh
+  );
+  // Trail stop breach → EXIT immediately (bypasses the slow SPY-streak EXIT gate)
+  const tier: SignalTier = (trailMode && latestClose < structuralTarget) ? "EXIT" : rawTier;
 
   return {
     ticker, score, strength, strategy, indicators: ind,
