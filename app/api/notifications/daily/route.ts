@@ -156,15 +156,34 @@ export async function POST(req: NextRequest) {
   }
 
   if (watchSignals.length > 0) {
+    // Group watch signals by type and show counts to stay under Telegram 4096 char limit
+    const byType: Record<string, string[]> = {};
+    for (const f of watchSignals) {
+      if (!byType[f.triggerType]) byType[f.triggerType] = [];
+      byType[f.triggerType].push(f.ticker);
+    }
+    const TYPE_LABEL: Record<string, string> = {
+      RSI: "RSI extreme", EMA_TOUCH: "EMA touch", VOL_SPIKE: "Vol spike",
+      MACD: "MACD accel", BB_SQUEEZE: "BB squeeze",
+    };
     lines.push("📊 <b>Watch signals</b>");
-    for (const f of watchSignals) lines.push(`  ${f.ticker} — ${f.detail}`);
+    for (const [type, tickers] of Object.entries(byType)) {
+      const label = TYPE_LABEL[type] ?? type;
+      const shown = tickers.slice(0, 8).join(", ");
+      const extra = tickers.length > 8 ? ` +${tickers.length - 8} more` : "";
+      lines.push(`  ${label}: ${shown}${extra}`);
+    }
     lines.push("");
   }
 
   const dashboardUrl = process.env.NEXT_PUBLIC_DASHBOARD_URL ?? "https://swingai.vercel.app";
   lines.push(`<a href="${dashboardUrl}">View dashboard →</a>`);
 
-  await sendTelegramMessage(lines.join("\n"));
+  // Telegram hard limit is 4096 chars — truncate safely if needed
+  let text = lines.join("\n");
+  if (text.length > 4000) text = text.slice(0, 4000) + "\n…(truncated)";
+
+  await sendTelegramMessage(text);
 
   await upsertNotificationLog(
     allFired.map((f) => ({ ticker: f.ticker, trigger_type: f.triggerType, score_date: scoreDate }))
