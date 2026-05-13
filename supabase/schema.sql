@@ -220,3 +220,42 @@ create policy "public read ml_discoveries"   on ml_discoveries for select using 
 create policy "service write ml_discoveries" on ml_discoveries for all    using (true);
 
 create index if not exists ml_discoveries_date_idx on ml_discoveries (score_date desc);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Earnings Catalyst Shadow Tracker (migration 003)
+-- Hypothesis: volume-confirmed 2-day streak at T-10 predicts pre-earnings drift.
+-- Logs both streak-confirmed AND control tickers so a t-test can be run after
+-- 30+ earnings events. Zero interference with XGBoost / GARCH pipeline.
+-- ─────────────────────────────────────────────────────────────────────────────
+create table if not exists earnings_shadow (
+  id                      uuid primary key default gen_random_uuid(),
+  ticker                  text not null,
+  earnings_date           date not null,
+  observation_date        date not null,
+  dte                     int,                   -- calendar days to earnings at observation
+  timing                  text,                  -- 'AMC' | 'BMO' | 'unknown'
+  streak_confirmed        boolean,               -- volume-confirmed 2-day streak: close>open + vol>1.5x avg, both days
+  streak_quality_score    float,                 -- 0–1: avg vol ratio normalized, 0 if streak_confirmed=false
+  sector_relative_2d      float,                 -- ticker 2d return minus SPY 2d return (market-relative)
+  ml_score                float,                 -- from today's ml_scores run
+  ml_score_pct            float,
+  ml_rank                 int,
+  price_at_observation    float,                 -- close on observation_date (entry price for T-10 entry strategy)
+  volume_ratio            float,                 -- avg of last 2 days vol / 20d avg vol
+  regime                  text,                  -- 'bull' | 'sideways' | 'bear' at observation
+  -- retroactive columns (filled after earnings_date passes):
+  price_at_t1             float,                 -- close on last trading day before earnings (T-1 exit price)
+  price_at_earnings_open  float,                 -- open on first trading day after announcement (gap measurement)
+  pre_earnings_return_pct float,                 -- (price_at_t1 - price_at_observation) / price_at_observation * 100
+  earnings_gap_pct        float,                 -- (price_at_earnings_open - price_at_t1) / price_at_t1 * 100
+  beat_miss               text,                  -- 'beat' | 'miss' | 'inline' | null (populated manually post-event)
+  created_at              timestamptz default now(),
+  unique (ticker, observation_date)
+);
+
+alter table earnings_shadow enable row level security;
+create policy "public read earnings_shadow"   on earnings_shadow for select using (true);
+create policy "service write earnings_shadow" on earnings_shadow for all    using (true);
+
+create index if not exists earnings_shadow_earnings_date_idx  on earnings_shadow (earnings_date);
+create index if not exists earnings_shadow_observation_date_idx on earnings_shadow (observation_date desc);
