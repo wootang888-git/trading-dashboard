@@ -147,6 +147,18 @@ create policy "service write ml_scores" on ml_scores for all using (true);
 
 create index if not exists ml_scores_date_rank_idx on ml_scores (score_date desc, ml_rank asc);
 
+-- Notifications log: deduplication table for Telegram alerts (Phase E)
+create table if not exists notifications_log (
+  id           uuid primary key default gen_random_uuid(),
+  ticker       text not null,
+  trigger_type text not null,  -- 'SCALE_IN' | 'EXIT' | 'RSI' | 'EMA_TOUCH' | 'VOL_SPIKE' | 'MACD' | 'BB_SQUEEZE'
+  sent_at      timestamptz not null default now(),
+  score_date   date not null
+);
+create index if not exists notifications_log_date_idx on notifications_log (score_date, ticker, trigger_type);
+alter table notifications_log enable row level security;
+create policy "service role only" on notifications_log for all using (false);
+
 -- ML performance: actual 5-day returns for past discoveries
 create table if not exists ml_performance (
   id              uuid primary key default gen_random_uuid(),

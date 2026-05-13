@@ -3,6 +3,10 @@
     {
       "path": "/api/signal-history/record",
       "schedule": "30 21 * * 1-5"
+    },
+    {
+      "path": "/api/notifications/daily",
+      "schedule": "0 12 * * 1-5"
     }
   ]
 }

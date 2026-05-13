@@ -36,8 +36,8 @@ export async function addToWatchlist(
   strategy: Strategy
 ): Promise<{ success: boolean; error?: string }> {
   const existing = await getWatchlist();
-  if (existing.length >= 100) {
-    return { success: false, error: "Watchlist is at the 100 ticker limit." };
+  if (existing.length >= 150) {
+    return { success: false, error: "Watchlist is at the 150 ticker limit." };
   }
   const { error } = await supabase
     .from("watchlist")
@@ -375,6 +375,29 @@ export async function getSignalStreaks(tickers: string[]): Promise<Record<string
     result[ticker] = { ticker, streak_days, ml_delta_24h, streak_direction };
   }
   return result;
+}
+
+// --- Notifications Log (Phase E — Telegram deduplication) ---
+
+/** Returns a Set of "ticker:trigger_type" already sent today to prevent re-sends. */
+export async function getNotificationsToday(scoreDate: string): Promise<Set<string>> {
+  const { data } = await supabase
+    .from("notifications_log")
+    .select("ticker, trigger_type")
+    .eq("score_date", scoreDate);
+  const sent = new Set<string>();
+  for (const row of data ?? []) {
+    sent.add(`${row.ticker}:${row.trigger_type}`);
+  }
+  return sent;
+}
+
+/** Logs fired notification triggers to prevent re-sends within the same trading day. */
+export async function upsertNotificationLog(
+  rows: { ticker: string; trigger_type: string; score_date: string }[]
+): Promise<void> {
+  if (rows.length === 0) return;
+  await supabase.from("notifications_log").insert(rows);
 }
 
 /** Latest ml_health row — regime, VIX, calibration flag, and pulse breadth signal. */
