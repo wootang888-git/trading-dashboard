@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getWatchlist, logBacktestResult } from "@/lib/supabase";
-import { getQuote, getHistorical } from "@/lib/yahoo";
+import { getQuoteFresh, getHistorical } from "@/lib/yahoo";
 import { runFullBacktest, runWatchlistBacktest, runWatchlistBacktestSweep, BACKTEST_UNIVERSE, HISTORY_DAYS, WatchlistBacktestConfig } from "@/lib/backtest";
 
 // Backtest is compute-heavy — no caching, always runs fresh
@@ -119,7 +119,7 @@ export async function POST() {
   // Fetch 52w highs in parallel (needed for indicator computation)
   const tickerData = await Promise.all(
     allTickers.map(async ({ ticker, strategy }) => {
-      const quote = await getQuote(ticker);
+      const quote = await getQuoteFresh(ticker);
       return quote ? { ticker, strategy, high52w: quote.high52w } : null;
     })
   );

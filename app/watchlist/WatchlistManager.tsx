@@ -41,7 +41,7 @@ export default function WatchlistManager({ initial }: { initial: WatchlistItem[]
     const n = name.trim();
     if (!t) { setError("Ticker symbol is required."); return; }
     setTicker(t);
-    if (items.length >= 100) { setError("Watchlist is at the 100 ticker limit."); return; }
+    if (items.length >= 150) { setError("Watchlist is at the 150 ticker limit."); return; }
 
     setLoading(true);
     try {
@@ -79,7 +79,7 @@ export default function WatchlistManager({ initial }: { initial: WatchlistItem[]
         </Link>
         <div>
           <h1 className="text-2xl font-bold">Manage Watchlist</h1>
-          <p className="text-gray-400 text-sm">{items.length}/100 tickers</p>
+          <p className="text-gray-400 text-sm">{items.length}/150 tickers</p>
         </div>
       </div>
 
@@ -122,7 +122,7 @@ export default function WatchlistManager({ initial }: { initial: WatchlistItem[]
               </div>
               <button
                 type="submit"
-                disabled={loading || items.length >= 100}
+                disabled={loading || items.length >= 150}
                 className="ml-auto flex items-center gap-1.5 bg-white text-black text-xs font-semibold px-3 py-1.5 rounded hover:bg-gray-200 transition-colors disabled:opacity-50"
               >
                 <Plus size={14} />

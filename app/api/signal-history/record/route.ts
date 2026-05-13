@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getWatchlist, getMlScores, supabase } from "@/lib/supabase";
-import { getQuote, getHistorical, HistoricalBar } from "@/lib/yahoo";
+import { getQuoteFresh, getHistorical, HistoricalBar } from "@/lib/yahoo";
 import { buildSignal } from "@/lib/signals";
 import { SECTOR_ETF } from "@/lib/watchlist";
 
@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
   await Promise.all(
     watchlist.map(async ({ ticker, strategy }) => {
       const [quote, bars] = await Promise.all([
-        getQuote(ticker),
+        getQuoteFresh(ticker),
         getHistorical(ticker, 90),
       ]);
       if (!quote || bars.length === 0) return;

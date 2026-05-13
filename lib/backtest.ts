@@ -12,7 +12,7 @@
  * The engine is not run on every refresh — it's triggered manually or via a nightly cron.
  */
 
-import { HistoricalBar, getHistorical, getQuote } from "./yahoo";
+import { HistoricalBar, getHistorical, getQuoteFresh } from "./yahoo";
 import { computeIndicators, scoreMomentumBreakout, scoreEMAPullback, scoreMeanReversion, scoreETFRotation, buildSignal } from "./signals";
 import { SignalWeight, upsertSignalWeights } from "./supabase";
 
@@ -559,7 +559,7 @@ export async function runWatchlistBacktest(
   for (const { ticker, strategy } of watchlist) {
     transitionStats[ticker] = { tradeToWatch: 0, watchToTrade: 0, totalSwitches: 0 };
     try {
-      const quote = await getQuote(ticker);
+      const quote = await getQuoteFresh(ticker);
       if (!quote) continue;
 
       const bars = await getHistorical(ticker, HISTORY_DAYS);

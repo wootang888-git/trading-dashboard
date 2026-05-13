@@ -55,7 +55,20 @@ function toETSeconds(date: Date): number {
   return Math.floor((utcMs - offsetMs) / 1000);
 }
 
-export async function getQuote(ticker: string): Promise<QuoteData | null> {
+const quoteCache = new Map<string, { data: QuoteData; expiresAt: number }>();
+
+/** Fetch a quote with in-process caching. ttlMs controls staleness tolerance:
+ *  - 10-min (600_000): signals data path — ISR + client refresh
+ *  - 1-min  (60_000):  current-prices route — Sprint D price alerts */
+export async function getCachedQuote(ticker: string, ttlMs: number): Promise<QuoteData | null> {
+  const cached = quoteCache.get(ticker);
+  if (cached && Date.now() < cached.expiresAt) return cached.data;
+  const data = await fetchQuote(ticker);
+  if (data) quoteCache.set(ticker, { data, expiresAt: Date.now() + ttlMs });
+  return data;
+}
+
+async function fetchQuote(ticker: string): Promise<QuoteData | null> {
   try {
     const quote = await yf.quote(ticker, {}, { validateResult: false });
     return {
@@ -75,6 +88,16 @@ export async function getQuote(ticker: string): Promise<QuoteData | null> {
   } catch {
     return null;
   }
+}
+
+/** Cached quote with 10-min TTL — use for signals data path. */
+export async function getQuote(ticker: string): Promise<QuoteData | null> {
+  return getCachedQuote(ticker, 10 * 60 * 1000);
+}
+
+/** Always-fresh quote, bypasses cache — use for backtest seed prices and signal-history snapshots. */
+export async function getQuoteFresh(ticker: string): Promise<QuoteData | null> {
+  return fetchQuote(ticker);
 }
 
 /** Returns the most recent news story for a ticker using Yahoo Finance search (free, no rate limit) */

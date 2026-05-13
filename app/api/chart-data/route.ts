@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
 
   // ── Intraday path (1D range) ──
   if (range === "1d") {
-    const bars = await getIntraday(sym, interval || "5m");
+    const bars = await getIntraday(sym, interval || "15m");
     return NextResponse.json({ bars, isIntraday: true });
   }
 

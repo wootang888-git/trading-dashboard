@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getQuote } from "@/lib/yahoo";
+import { getCachedQuote } from "@/lib/yahoo";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
 
   const entries = await Promise.all(
     tickers.map(async (ticker) => {
-      const q = await getQuote(ticker);
+      const q = await getCachedQuote(ticker, 60_000);
       return [ticker, q ? { price: q.price, prevClose: q.prevClose, open: q.open } : null] as const;
     })
   );

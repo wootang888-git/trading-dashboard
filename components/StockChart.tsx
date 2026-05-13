@@ -42,7 +42,7 @@ function calcBBFromBars(bars: Bar[], period = 20): { upper: number[]; lower: num
 
 
 type Range = "1d" | "5d" | "10d" | "1mo";
-type IntradayInterval = "1m" | "2m" | "5m" | "15m" | "30m" | "1h";
+type IntradayInterval = "15m" | "30m" | "1h";
 type MultiInterval = "daily" | "30m" | "1h" | "2h" | "4h";
 
 interface Bar {
@@ -63,7 +63,7 @@ interface StockChartProps {
 
 const RANGES: Range[] = ["1d", "5d", "10d", "1mo"];
 const RANGE_LABEL: Record<Range, string> = { "1d": "1D", "5d": "5D", "10d": "10D", "1mo": "1M" };
-const INTRADAY_INTERVALS: IntradayInterval[] = ["1m", "2m", "5m", "15m", "30m", "1h"];
+const INTRADAY_INTERVALS: IntradayInterval[] = ["15m", "30m", "1h"];
 const MULTI_INTERVALS: Record<Range, MultiInterval[]> = {
   "1d": [],
   "5d":  ["daily", "30m", "1h"],
@@ -85,7 +85,7 @@ export default function StockChart({
   const tooltipRef = useRef<HTMLDivElement>(null);
 
   const [range, setRange] = useState<Range>("10d");
-  const [interval, setInterval] = useState<IntradayInterval>("5m");
+  const [interval, setInterval] = useState<IntradayInterval>("15m");
   const [multiInterval, setMultiInterval] = useState<MultiInterval>("daily");
   const [bars, setBars] = useState<Bar[]>([]);
   const [isIntraday, setIsIntraday] = useState(false);

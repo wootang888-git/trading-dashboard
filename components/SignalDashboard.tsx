@@ -8,11 +8,11 @@ import CalculatorModal from "./CalculatorModal";
 import MlDiscoveries from "./MlDiscoveries";
 import MlTrackRecord from "./MlTrackRecord";
 import SectorPulseBanner, { SectorPulseData } from "./SectorPulseBanner";
-import { RefreshCw, BookOpen } from "lucide-react";
+import { RefreshCw, BookOpen, ChevronDown, ChevronUp } from "lucide-react";
 import { MlScore, MlPerformanceRow } from "@/lib/supabase";
 import type { HardGates, NbaDirective, SignalTier } from "@/lib/signals";
 
-const REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes
+const REFRESH_INTERVAL = 10 * 60 * 1000; // 10 minutes
 const TRADE_THRESHOLD = 82;  // legacy: still used for cross-threshold notifications
 
 interface ValidationResult {
@@ -164,6 +164,8 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
   const [showScoredTooltip, setShowScoredTooltip] = useState(false);
   // ticker → { ids: trade IDs[], count }
   const [positionData, setPositionData] = useState<Map<string, { ids: string[]; count: number }>>(new Map());
+  const [notYetOpen, setNotYetOpen] = useState(false);
+  const [positionsLoaded, setPositionsLoaded] = useState(false);
 
 
   // Track previous conviction scores to detect Watch→Trade crossings
@@ -195,6 +197,7 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
         pdMap.set(t.ticker, entry);
       }
       setPositionData(pdMap);
+      setPositionsLoaded(true);
 
       if (openTrades.length === 0) { setOpenPositions({ count: 0, nearStop: [], aboveTarget: [] }); return; }
 
@@ -326,6 +329,20 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
     return () => clearInterval(tick);
   }, []);
 
+  // Refresh when app is foregrounded (tab visible or phone screen wake)
+  // Debounced: skip if a refresh already ran within the last 30 seconds
+  const lastRefreshAtRef = useRef(0);
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (!document.hidden && Date.now() - lastRefreshAtRef.current > 30_000) {
+        lastRefreshAtRef.current = Date.now();
+        refresh();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [refresh]);
+
   // Build Position — two sub-groups
   // Exclude BREAKOUT_WATCH — those always receive WATCH directive (no valid entry yet)
   const scaleInDirective = data.signals.filter((s) => s.nbaDirective === "SCALE_IN" && s.tier !== "BREAKOUT_WATCH");
@@ -346,6 +363,21 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
     .sort((a, b) => (a.nbaDirective === "EXIT" ? -1 : b.nbaDirective === "EXIT" ? 1 : 0));
   // EXIT-tier cards merge into notYet (no standalone Exit Now section)
   const exitCards = data.signals.filter((s) => s.tier === "EXIT");
+  // Not Yet accordion split: defer until positions are loaded to avoid flicker
+  // Before loadPositions resolves, show all cards visible (no accordion split yet)
+  // Priority: 1) In Position, 2) High Conviction (>69, not in position), 3) Hidden (accordion)
+  const notYetInPosition = !positionsLoaded
+    ? notYet
+    : notYet.filter((s) => positionData.has(s.ticker)).sort((a, b) => b.convictionScore - a.convictionScore);
+  const notYetNotInPosition = !positionsLoaded
+    ? []
+    : notYet.filter((s) => !positionData.has(s.ticker));
+  const notYetHighConviction = notYetNotInPosition
+    .filter((s) => s.convictionScore > 69)
+    .sort((a, b) => b.convictionScore - a.convictionScore);
+  const notYetHidden = notYetNotInPosition
+    .filter((s) => s.convictionScore <= 69)
+    .sort((a, b) => b.convictionScore - a.convictionScore);
   // Pill counts
   const scaleInCount = scaleInDirective.length;
   const holdTrailCount = trendRiding.length;
@@ -578,13 +610,33 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
             Looking for an entry point. Stay patient while we wait for a signal.
           </p>
           <div className="space-y-3">
-            {/* EXIT-tier cards first — thesis broken, EXIT pill visible on card */}
+            {/* In-position tickers always visible — user has an open trade here */}
+            {notYetInPosition.map((s) => (
+              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} inPosition={true} openTradeCount={positionData.get(s.ticker)?.count ?? 0} openTradeId={positionData.get(s.ticker)?.count === 1 ? positionData.get(s.ticker)?.ids[0] : undefined} onTradeLogged={loadPositions} />
+            ))}
+            {/* High conviction (>69) not in position — always visible, sorted by conviction descending */}
+            {notYetHighConviction.map((s) => (
+              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} inPosition={false} openTradeCount={0} openTradeId={undefined} onTradeLogged={loadPositions} />
+            ))}
+            {/* EXIT-tier cards — thesis broken, EXIT pill visible on card */}
             {exitCards.map((s) => (
               <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} inPosition={positionData.has(s.ticker)} openTradeCount={positionData.get(s.ticker)?.count ?? 0} openTradeId={positionData.get(s.ticker)?.count === 1 ? positionData.get(s.ticker)?.ids[0] : undefined} onTradeLogged={loadPositions} />
             ))}
-            {notYet.map((s) => (
-              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} inPosition={positionData.has(s.ticker)} openTradeCount={positionData.get(s.ticker)?.count ?? 0} openTradeId={positionData.get(s.ticker)?.count === 1 ? positionData.get(s.ticker)?.ids[0] : undefined} onTradeLogged={loadPositions} />
-            ))}
+            {/* Remaining Not Yet — collapsed by default, mounted only when open */}
+            {notYetHidden.length > 0 && (
+              <>
+                <button
+                  onClick={() => setNotYetOpen((v) => !v)}
+                  className="w-full flex items-center justify-between px-3 py-2 rounded-lg border border-gray-800 text-gray-400 text-xs hover:border-gray-600 hover:text-gray-300 transition-colors"
+                >
+                  <span>{notYetOpen ? "Hide" : `${notYetHidden.length} more — tap to expand`}</span>
+                  {notYetOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                </button>
+                {notYetOpen && notYetHidden.map((s) => (
+                  <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} inPosition={false} openTradeCount={0} openTradeId={undefined} onTradeLogged={loadPositions} />
+                ))}
+              </>
+            )}
           </div>
         </section>
       )}
