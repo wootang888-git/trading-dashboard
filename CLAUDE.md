@@ -21,13 +21,13 @@ Three-layer pipeline called by both data paths:
 
 1. **`computeIndicators(bars, high52w, spyBars, ticker)`** — computes 40+ technical indicators from OHLCV bars. The 4th `ticker` param fixes SPY RS reference equality (the old `bars === spyBars` check always returned false). Returns a single `Indicators` object. New indicators must be added to BOTH the `zero` fallback object AND the `return` statement (~60 lines apart) — missing either causes a TypeScript error.
 
-2. **Strategy scorers** — four functions, each returning `{ score (0–10), entryNote, stopNote, conditions[] }`:
+2. **Strategy scorers** — four functions, each returning `{ score (0–15), entryNote, stopNote, conditions[] }`:
    - `scoreMomentumBreakout` — RSI 50–75, above MAs, near 52w high, volume surge
    - `scoreEMAPullback` — 8 EMA > 20 EMA, price tight to 8 EMA, bounce candle
    - `scoreMeanReversion` — RSI 25–50 (oversold), below MA20, above MA50, reversal candle
    - `scoreETFRotation` — above both MAs, RSI 50–70, volume confirmed, near 52w high
 
-3. **`validateSignal` + `computeConviction`** — produces a 0–100 conviction score: 40 pts technical (score/10×40), 30 pts R:R tightness (≤3% risk = full points), 15 pts sector relative strength, 15 pts data quality.
+3. **`validateSignal` + `computeConviction`** — produces a 0–100 conviction score: 40 pts technical (score/15×40), 30 pts R:R tightness (≤3% risk = full points), 15 pts sector relative strength, 15 pts data quality.
 
 4. **`computeADX(bars, 14)`** — Wilder ADX-based regime classifier. Returns `regime: "bull" | "bear" | "choppy"`. Regime gates: bull ADX>25 & +DI>-DI; bear ADX>25 & -DI>+DI; choppy ADX≤25.
 

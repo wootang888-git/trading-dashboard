@@ -10,11 +10,11 @@ export const revalidate = 300;
 
 async function getInitialData() {
   const watchlist = await getWatchlist();
+  const watchlistTickers = watchlist.map((w) => w.ticker);
 
-  // Fetch SPY bars once upfront for RS calculations
+  // Fetch SPY bars, sector ETFs, and ML scores in parallel — all needed before per-ticker scoring
   const spyBars = await getHistorical("SPY", 90);
 
-  // Fetch each unique sector ETF once and share across all tickers in that sector
   const neededSectorEtfs = [...new Set(
     watchlist.map((w) => SECTOR_ETF[w.ticker]).filter(Boolean)
   )];
@@ -24,6 +24,9 @@ async function getInitialData() {
       sectorBarMap[etf] = await getHistorical(etf, 90);
     })
   );
+
+  // mlScores fetched here (not after the loop) so pm_vol_ratio_live is available at scoring time
+  const mlScoresEarly = await getMlScores(watchlistTickers);
 
   const sectorEtfAboveMA20Map: Record<string, boolean> = {};
   for (const etf of neededSectorEtfs) {
@@ -48,7 +51,7 @@ async function getInitialData() {
       const sectorEtf = SECTOR_ETF[ticker];
       const sectorBars = sectorEtf ? (sectorBarMap[sectorEtf] ?? []) : [];
       const sectorEtfAboveMA20 = sectorEtf ? (sectorEtfAboveMA20Map[sectorEtf] ?? true) : true;
-      const signal = buildSignal(ticker, strategy, bars, quote.high52w, spyBars, sectorBars, sectorEtfAboveMA20);
+      const signal = buildSignal(ticker, strategy, bars, quote.high52w, spyBars, sectorBars, sectorEtfAboveMA20, mlScoresEarly[ticker]?.pm_vol_ratio_live ?? null);
 
       const POSITIVE = ["buy", "bullish", "outperform", "upgrade", "strong", "surge", "rally", "beat", "upside", "growth"];
       const NEGATIVE = ["sell", "bearish", "underperform", "downgrade", "weak", "crash", "avoid", "miss", "cut", "risk"];
@@ -96,9 +99,7 @@ async function getInitialData() {
     ? spySignal.indicators.isAboveMa20 ? "bull" : "bear"
     : "neutral";
 
-  const watchlistTickers = watchlist.map((w) => w.ticker);
-  const [mlScores, mlDiscoveries, mlPerformance, mlHealth, sectorPulse, convictionTrends, signalStreaks] = await Promise.all([
-    getMlScores(watchlistTickers),
+  const [mlDiscoveries, mlPerformance, mlHealth, sectorPulse, convictionTrends, signalStreaks] = await Promise.all([
     getMlDiscoveries(watchlistTickers, 10),
     getMlPerformance(20),
     getMlHealth(),
@@ -108,7 +109,7 @@ async function getInitialData() {
   ]);
 
   const enrichedSignals = (signals as NonNullable<(typeof signals)[number]>[]).map((s) => {
-    const mlData = mlScores[s.ticker];
+    const mlData = mlScoresEarly[s.ticker];
     const streakData = signalStreaks[s.ticker];
     const streakDays = streakData?.streak_days ?? 0;
     const mlDelta24h = streakData?.ml_delta_24h ?? null;

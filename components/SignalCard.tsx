@@ -293,6 +293,13 @@ export default function SignalCard({
   const risk = entryPrice > 0 && stopPrice > 0 ? Math.abs(entryPrice - stopPrice) : null;
   // Use structural target from backend (52w high or trail stop); fall back to 3:1 for legacy data
   const targetPrice = structuralTarget ?? (entryPrice && risk ? entryPrice + 3 * risk : null);
+
+  // UX-01: Conviction breakdown components (mirrors computeConviction in signals.ts)
+  const riskPctConv = entryPrice > 0 && stopPrice > 0 && entryPrice > stopPrice ? (entryPrice - stopPrice) / entryPrice : 0.20;
+  const rrPts = riskPctConv > 0 && riskPctConv <= 0.03 ? 30 : riskPctConv <= 0.05 ? 26 : riskPctConv <= 0.08 ? 20 : riskPctConv <= 0.12 ? 12 : riskPctConv <= 0.20 ? 5 : 0;
+  const sectorPts = sectorRs === null ? 7 : sectorRs > 3 ? 15 : sectorRs > 1 ? 12 : sectorRs > 0 ? 9 : sectorRs > -2 ? 5 : 0;
+  const qualityPts = Math.max(0, validation.dataQualityPts + validation.conflictPenalty);
+  const techPts = Math.max(0, Math.min(40, convictionScore - rrPts - sectorPts - qualityPts));
   const displayRR = rrAchievable ?? (risk && entryPrice && targetPrice ? (targetPrice - entryPrice) / risk : null);
   const earningsWarning = sa?.earningsDays !== null && sa?.earningsDays !== undefined && sa.earningsDays <= 14;
 
@@ -634,6 +641,10 @@ export default function SignalCard({
             className="px-5 pb-4 border-t border-[#3c4a40]/20"
             onClick={() => setActiveTip(null)}
           >
+            {/* UX-04: Signal staleness timestamp */}
+            <p className="text-[9px] text-[#bacbbd]/35 text-right mt-2 mb-1">
+              Signal {new Date(validation.checked_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+            </p>
 
             {/* Technical indicators */}
             <div className="grid grid-cols-3 gap-2 mt-4 mb-3">
@@ -728,6 +739,69 @@ export default function SignalCard({
                 </MetricTile>
               </div>
             )}
+
+            {/* UX-03: Pre-Market Interpretation Labels */}
+            {(gapPctLive != null || pmVolRatioLive != null) && (
+              <div className="grid grid-cols-2 gap-2 mb-3">
+                {gapPctLive != null && (
+                  <MetricTile
+                    label="Gap Live"
+                    tip="Pre-market price gap vs. yesterday's close. >2% gap-up = institutional overnight buying. Negative = gap-down, potential weakness."
+                    activeTip={activeTip}
+                    setActiveTip={setActiveTip}
+                  >
+                    <p className={`font-bold text-sm ${gapPctLive > 2 ? "text-[#43ed9e]" : gapPctLive < -2 ? "text-[#ffb3ae]" : "text-[#dde3ec]"}`}>
+                      {gapPctLive > 0 ? "+" : ""}{gapPctLive.toFixed(1)}%
+                    </p>
+                    <p className="text-[9px] text-[#bacbbd]/45 mt-0.5">
+                      {gapPctLive > 3 ? "Strong gap-up" : gapPctLive > 1 ? "Mild gap-up" : gapPctLive < -3 ? "Strong gap-down" : gapPctLive < -1 ? "Mild gap-down" : "Flat open"}
+                    </p>
+                  </MetricTile>
+                )}
+                {pmVolRatioLive != null && (
+                  <MetricTile
+                    label="Pre-mkt Vol"
+                    tip="Pre-market volume vs. daily average. >2× = institutional positioning before the open — the signal most novice traders miss."
+                    activeTip={activeTip}
+                    setActiveTip={setActiveTip}
+                  >
+                    <p className={`font-bold text-sm ${pmVolRatioLive > 2 ? "text-[#43ed9e]" : pmVolRatioLive > 1 ? "text-[#dde3ec]" : "text-[#bacbbd]/60"}`}>
+                      {pmVolRatioLive.toFixed(1)}×
+                    </p>
+                    <p className="text-[9px] text-[#bacbbd]/45 mt-0.5">
+                      {pmVolRatioLive > 5 ? "Unusual — high alert" : pmVolRatioLive > 2 ? "Institutional interest" : pmVolRatioLive > 1 ? "Above avg" : "Light activity"}
+                    </p>
+                  </MetricTile>
+                )}
+              </div>
+            )}
+
+            {/* UX-01: Conviction Score Breakdown */}
+            <div className="mb-3 rounded-lg bg-[#0e141a] px-3 py-2.5">
+              <p className="text-[9px] text-[#bacbbd]/50 uppercase tracking-widest mb-2">Score breakdown</p>
+              <div className="grid grid-cols-4 gap-2">
+                {[
+                  { label: "Setup", pts: techPts, max: 40, tip: "Technical signals: breakout, volume, RSI, MACD, trend structure" },
+                  { label: "R:R", pts: rrPts, max: 30, tip: "How tight the stop is. Tighter stop = better risk control = more points" },
+                  { label: "Sector", pts: sectorPts, max: 15, tip: "Is this stock outperforming its sector ETF? Leaders tend to keep leading" },
+                  { label: "Data", pts: qualityPts, max: 15, tip: "Data freshness, no conflicting indicators, stop within 8% of entry" },
+                ].map(({ label, pts, max, tip }) => (
+                  <div key={label} className="text-center" title={tip}>
+                    <p className="text-[9px] text-[#bacbbd]/45 uppercase tracking-wider mb-1">{label}</p>
+                    <div className="w-full bg-[#252b31] h-0.5 rounded-full overflow-hidden mb-1">
+                      <div
+                        className="h-full rounded-full transition-all"
+                        style={{
+                          width: `${Math.round((pts / max) * 100)}%`,
+                          backgroundColor: pts / max >= 0.7 ? "#43ed9e" : pts / max >= 0.4 ? "#ffb33c" : "#ffb3ae",
+                        }}
+                      />
+                    </div>
+                    <p className="text-[10px] font-bold text-[#dde3ec]">{pts}<span className="text-[#bacbbd]/40 font-normal">/{max}</span></p>
+                  </div>
+                ))}
+              </div>
+            </div>
 
             {/* Why not High Conviction? — gate reasons for TACTICAL_BUY, WATCH_EXTENDED, and BREAKOUT_WATCH */}
             {(tier === "TACTICAL_BUY" || tier === "WATCH_EXTENDED" || tier === "BREAKOUT_WATCH") && firedGates.length > 0 && (
@@ -845,6 +919,36 @@ export default function SignalCard({
                     )}
                   </p>
                 )}
+              </div>
+            )}
+
+            {/* UX-02: Trade Setup Walkthrough */}
+            {convictionScore >= 70 && entryPrice > 0 && stopPrice > 0 && targetPrice && (
+              <div className="mb-3 rounded-lg bg-[#0e141a] px-3 py-2.5">
+                <p className="text-[9px] text-[#bacbbd]/50 uppercase tracking-widest mb-2.5">How to place this trade</p>
+                <div className="space-y-2">
+                  <div className="flex items-start gap-2.5">
+                    <span className="shrink-0 w-4 h-4 rounded-full bg-[#43ed9e]/15 text-[#43ed9e] text-[9px] font-bold flex items-center justify-center mt-0.5">1</span>
+                    <p className="text-[11px] text-[#bacbbd] leading-snug">
+                      Set a <span className="text-[#43ed9e] font-semibold">buy-stop order at ${entryPrice.toFixed(2)}</span> — triggers only if price rises to this level, confirming the move
+                    </p>
+                  </div>
+                  <div className="flex items-start gap-2.5">
+                    <span className="shrink-0 w-4 h-4 rounded-full bg-[#ffb3ae]/15 text-[#ffb3ae] text-[9px] font-bold flex items-center justify-center mt-0.5">2</span>
+                    <p className="text-[11px] text-[#bacbbd] leading-snug">
+                      Immediately set a <span className="text-[#ffb3ae] font-semibold">stop-loss at ${stopPrice.toFixed(2)}</span> — this is your max loss per share if the trade goes wrong
+                    </p>
+                  </div>
+                  <div className="flex items-start gap-2.5">
+                    <span className="shrink-0 w-4 h-4 rounded-full bg-[#adc6ff]/15 text-[#adc6ff] text-[9px] font-bold flex items-center justify-center mt-0.5">3</span>
+                    <p className="text-[11px] text-[#bacbbd] leading-snug">
+                      {trailMode
+                        ? <>Plan to <span className="text-[#adc6ff] font-semibold">trail your stop up</span> as price rises — move stop up every few days to lock in gains</>
+                        : <>Set a <span className="text-[#adc6ff] font-semibold">profit target at ${targetPrice.toFixed(2)}</span> — take partial or full profits when price reaches this level</>
+                      }
+                    </p>
+                  </div>
+                </div>
               </div>
             )}
 

@@ -68,13 +68,12 @@ export async function GET() {
       const sectorEtf = SECTOR_ETF[ticker];
       const sectorBars = sectorEtf ? (sectorBarMap[sectorEtf] ?? []) : [];
       const sectorEtfAboveMA20 = sectorEtf ? (sectorEtfAboveMA20Map[sectorEtf] ?? true) : true;
-      const signal = buildSignal(ticker, strategy, bars, quote.high52w, spyBars, sectorBars, sectorEtfAboveMA20);
+      const mlData = mlScores[ticker];
+      const signal = buildSignal(ticker, strategy, bars, quote.high52w, spyBars, sectorBars, sectorEtfAboveMA20, mlData?.pm_vol_ratio_live ?? null);
 
       const earningsDays = quote.earningsTimestamp
         ? Math.ceil((quote.earningsTimestamp.getTime() - Date.now()) / 86400000)
         : null;
-
-      const mlData = mlScores[ticker];
       const streakData = signalStreaks[ticker];
       const streakDays = streakData?.streak_days ?? 0;
       const mlDelta24h = streakData?.ml_delta_24h ?? null;

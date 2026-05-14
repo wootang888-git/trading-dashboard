@@ -166,6 +166,7 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
   const [positionData, setPositionData] = useState<Map<string, { ids: string[]; count: number }>>(new Map());
   const [notYetOpen, setNotYetOpen] = useState(false);
   const [positionsLoaded, setPositionsLoaded] = useState(false);
+  const [updatedTime, setUpdatedTime] = useState("");
 
 
   // Track previous conviction scores to detect Watch→Trade crossings
@@ -373,19 +374,22 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
     ? []
     : notYet.filter((s) => !positionData.has(s.ticker));
   const notYetHighConviction = notYetNotInPosition
-    .filter((s) => s.convictionScore > 69)
+    .filter((s) => s.convictionScore > 68)
     .sort((a, b) => b.convictionScore - a.convictionScore);
-  const notYetHidden = notYetNotInPosition
-    .filter((s) => s.convictionScore <= 69)
-    .sort((a, b) => b.convictionScore - a.convictionScore);
+  const notYetHidden = [
+    ...notYetNotInPosition.filter((s) => s.convictionScore <= 68),
+    ...exitCards,
+  ].sort((a, b) => b.convictionScore - a.convictionScore || b.changePct - a.changePct);
   // Pill counts
   const scaleInCount = scaleInDirective.length;
   const holdTrailCount = trendRiding.length;
 
-  const updatedTime = new Date(data.updatedAt).toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  useEffect(() => {
+    setUpdatedTime(new Date(data.updatedAt).toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+    }));
+  }, [data.updatedAt]);
 
   const sectionHead = (color: string) => ({
     color,
@@ -618,11 +622,7 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
             {notYetHighConviction.map((s) => (
               <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} inPosition={false} openTradeCount={0} openTradeId={undefined} onTradeLogged={loadPositions} />
             ))}
-            {/* EXIT-tier cards — thesis broken, EXIT pill visible on card */}
-            {exitCards.map((s) => (
-              <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} inPosition={positionData.has(s.ticker)} openTradeCount={positionData.get(s.ticker)?.count ?? 0} openTradeId={positionData.get(s.ticker)?.count === 1 ? positionData.get(s.ticker)?.ids[0] : undefined} onTradeLogged={loadPositions} />
-            ))}
-            {/* Remaining Not Yet — collapsed by default, mounted only when open */}
+            {/* Remaining Not Yet + EXIT-tier — collapsed by default, mounted only when open */}
             {notYetHidden.length > 0 && (
               <>
                 <button
@@ -633,7 +633,7 @@ export default function SignalDashboard({ initial }: { initial: DashboardData })
                   {notYetOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                 </button>
                 {notYetOpen && notYetHidden.map((s) => (
-                  <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} inPosition={false} openTradeCount={0} openTradeId={undefined} onTradeLogged={loadPositions} />
+                  <SignalCard key={s.ticker} {...s} {...s.indicators} sa={s.sa} onOpenCalc={openCalc} mlScore={s.mlScore} mlRank={s.mlRank} garchVol={s.garchVol} gapPctLive={s.gapPctLive} pmVolRatioLive={s.pmVolRatioLive} open930Live={s.open930Live} convictionTrend={s.convictionTrend} convictionStreak={s.convictionStreak} inPosition={positionData.has(s.ticker)} openTradeCount={positionData.get(s.ticker)?.count ?? 0} openTradeId={positionData.get(s.ticker)?.count === 1 ? positionData.get(s.ticker)?.ids[0] : undefined} onTradeLogged={loadPositions} />
                 ))}
               </>
             )}

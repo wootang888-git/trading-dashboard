@@ -540,7 +540,8 @@ export function computeIndicators(
 
 export function scoreMomentumBreakout(
   ind: Indicators,
-  bars: HistoricalBar[]
+  bars: HistoricalBar[],
+  pmVolRatioLive: number | null = null
 ): { score: number; entryNote: string; stopNote: string; entryPrice: number; stopPrice: number; conditions: Condition[] } {
   let score = 0;
 
@@ -553,13 +554,15 @@ export function scoreMomentumBreakout(
   if (ind.isAboveMa50) score += 1;
   if (ind.isNear52wHigh) score += 2;
 
-  // 2. Volume confirmation (soft penalty below 1.5x — mandatory per Convergence spec)
+  // 2. Volume confirmation — 5-tier monotonic curve (L2: eliminates non-monotonic cliff at 1.5×)
+  // ≥2.0× institutional surge (+3), ≥1.5× strong (+2), ≥1.2× moderate (+1),
+  // 1.0–1.2× neutral (0), <1.0× thin breakout penalty (−2)
   const volumeSurge = ind.volumeRatio >= 1.5;
-  const volumeOk = ind.volumeRatio >= 1.2;
-  if (volumeSurge) score += 2;
-  else if (volumeOk) score += 1;
-  if (ind.volumeRatio < 1.5) score -= 2; // Penalty: below Convergence threshold
-  if (ind.obv20High) score += 2; // Accumulation check
+  if      (ind.volumeRatio >= 2.0) score += 3;
+  else if (ind.volumeRatio >= 1.5) score += 2;
+  else if (ind.volumeRatio >= 1.2) score += 1;
+  else if (ind.volumeRatio <  1.0) score -= 2;
+  if (ind.obv20High) score += 3; // Accumulation — OBV at 20d high predicts silent institutional buildup
 
   // 3. Volatility Contraction (VCP) — meaningful precondition, not just a bonus
   if (ind.bbSqueeze) score += 2;
@@ -593,6 +596,11 @@ export function scoreMomentumBreakout(
   if (ind.rs6MonthQuartile) score += 2;
   else if (ind.rsRising) score += 1;
 
+  // 7. Pre-market volume confirmation (VOL-PM Sprint 2)
+  // pm_vol_ratio_live > 2× = institutional overnight interest before the open
+  const pmVolConfirmed = pmVolRatioLive !== null && pmVolRatioLive > 2.0;
+  if (pmVolConfirmed) score += 1;
+
   // AC-010: ATR Guard
   if (ind.atr14 < 0.05) return { score: 0, entryPrice: 0, stopPrice: 0, entryNote: "ATR too low", stopNote: "ATR too low", conditions: [] };
 
@@ -611,7 +619,7 @@ export function scoreMomentumBreakout(
     : `Stop $${stopPrice.toFixed(2)} (1.5× ATR below entry)`; // AC-001: Remove numeric ATR value
 
   return {
-    score: Math.min(score, 10),
+    score: Math.min(score, 15),
     entryPrice,
     stopPrice,
     entryNote: `Buy stop above $${ind.high50d.toFixed(2)} (50-day structural resistance + ATR buffer)`,
@@ -623,7 +631,7 @@ export function scoreMomentumBreakout(
       { label: "RSI bull zone", met: ind.rsiInBullZone },
       { label: "BB Squeeze (VCP)", met: ind.bbSqueeze },
       { label: "OBV 20d High", met: ind.obv20High },
-      { label: "Volume surge 1.5x", met: volumeSurge },
+      { label: "Volume (≥1.5×)", met: volumeSurge },
       { label: "Above MA20", met: ind.isAboveMa20 },
       { label: "Above MA50", met: ind.isAboveMa50 },
       { label: "EMA fan open", met: ind.emaFanOpen },
@@ -636,6 +644,7 @@ export function scoreMomentumBreakout(
       { label: "Recent uptrend", met: recentUptrend },
       { label: "MACD bullish", met: macdBullish },
       { label: "MACD accel 2d", met: ind.macdAccel2d },
+      { label: "Pre-mkt vol (>2×)", met: pmVolConfirmed },
     ],
   };
 }
@@ -712,7 +721,7 @@ export function scoreEMAPullback(
     : `Stop $${stopPrice.toFixed(2)} (below swing low $${ind.recentSwingLow?.toFixed(2) ?? "N/A"} − 0.3× ATR)`;
 
   return {
-    score: Math.min(score, 10),
+    score: Math.min(score, 15),
     entryPrice,
     stopPrice,
     entryNote: `Buy above $${entryPrice.toFixed(2)} (8 EMA pullback bounce)`,
@@ -795,7 +804,7 @@ export function scoreMeanReversion(
     : `Stop $${stopPrice.toFixed(2)} (1.0× ATR below candle low)`; // AC-001: Descriptive labels only
 
   return {
-    score: Math.min(score, 10),
+    score: Math.min(score, 15),
     entryPrice,
     stopPrice,
     entryNote: `Buy above $${entryPrice.toFixed(2)} (above reversal candle high)`,
@@ -863,7 +872,7 @@ export function scoreETFRotation(
     : `Stop $${stopPrice.toFixed(2)} (below recent low)`;
 
   return {
-    score: Math.min(score, 10),
+    score: Math.min(score, 15),
     entryPrice,
     stopPrice,
     entryNote: `Buy above $${entryPrice.toFixed(2)} (confirmation above current close)`,
@@ -1014,8 +1023,8 @@ function computeConviction(
   sectorRs: number | null,
   validation: ValidationResult
 ): number {
-  // Component 1: Technical score (40 pts)
-  const technicalPts = Math.round((score / 10) * 40);
+  // Component 1: Technical score (40 pts) — normalized against 15-pt scorer cap (L1)
+  const technicalPts = Math.round((score / 15) * 40);
 
   // Component 2: R:R tightness (30 pts)
   const riskPct = entryPrice > 0 && stopPrice > 0 && entryPrice > stopPrice
@@ -1277,7 +1286,8 @@ export function buildSignal(
   high52w: number,
   spyBars: HistoricalBar[] = [],
   sectorBars: HistoricalBar[] = [],
-  sectorEtfAboveMA20: boolean = true
+  sectorEtfAboveMA20: boolean = true,
+  pmVolRatioLive: number | null = null
 ): Signal {
   const ind = computeIndicators(bars, high52w, spyBars, ticker);
 
@@ -1285,12 +1295,12 @@ export function buildSignal(
     strategy === "ema_pullback"     ? scoreEMAPullback(ind, bars)
     : strategy === "mean_reversion" ? scoreMeanReversion(ind, bars)
     : strategy === "etf_rotation"   ? scoreETFRotation(ind, bars)
-    : scoreMomentumBreakout(ind, bars);
+    : scoreMomentumBreakout(ind, bars, pmVolRatioLive);
 
   const strength =
-    score >= 8 ? "strong"
-    : score >= 6 ? "moderate"
-    : score >= 4 ? "weak"
+    score >= 12 ? "strong"
+    : score >= 9 ? "moderate"
+    : score >= 6 ? "weak"
     : "none";
 
   const sectorRs = sectorBars.length >= 21

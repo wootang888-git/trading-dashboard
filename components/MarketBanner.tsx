@@ -8,19 +8,22 @@ export default function MarketBanner({ condition }: { condition: Condition }) {
       bg: { backgroundColor: "rgba(67, 237, 158, 0.08)" },
       dot: "#43ed9e",
       label: "BULL MARKET",
-      desc: "SPY is above its 20-day MA. Conditions favor long trades.",
+      desc: "SPY above 20-day MA. Conditions favor longs.",
+      threshold: "High Conviction: score ≥ 82",
     },
     bear: {
       bg: { backgroundColor: "rgba(255, 179, 174, 0.08)" },
       dot: "#ffb3ae",
       label: "BEAR / CHOPPY",
-      desc: "SPY is below its 20-day MA. Reduce position sizes or stay flat.",
+      desc: "SPY below 20-day MA. Reduce size or stay flat.",
+      threshold: "High Conviction: score ≥ 90 (stricter — bear regime)",
     },
     neutral: {
       bg: { backgroundColor: "var(--surface-low)" },
       dot: "#bacbbd",
       label: "LOADING...",
       desc: "Fetching market data.",
+      threshold: null,
     },
   }[condition];
 
@@ -43,6 +46,11 @@ export default function MarketBanner({ condition }: { condition: Condition }) {
         <span className="text-sm ml-2" style={{ color: "var(--on-surface-variant)" }}>
           {config.desc}
         </span>
+        {config.threshold && (
+          <p className="text-[10px] mt-0.5" style={{ color: "var(--on-surface-variant)", opacity: 0.6 }}>
+            {config.threshold}
+          </p>
+        )}
       </div>
     </div>
   );
