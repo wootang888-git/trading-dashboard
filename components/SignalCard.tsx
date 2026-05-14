@@ -303,6 +303,49 @@ export default function SignalCard({
   const displayRR = rrAchievable ?? (risk && entryPrice && targetPrice ? (targetPrice - entryPrice) / risk : null);
   const earningsWarning = sa?.earningsDays !== null && sa?.earningsDays !== undefined && sa.earningsDays <= 14;
 
+  // Frontend guard: treat near-zero as absent (sentinel written by pulse_premarket when pm_volume == 0)
+  const effectiveGap = gapPctLive != null && Math.abs(gapPctLive) > 0.001 ? gapPctLive : null;
+  const effectivePmVol = pmVolRatioLive != null && pmVolRatioLive > 0.01 ? pmVolRatioLive : null;
+
+  // NBA second footer — pre-market edge surfaced always-visible per tier × signal matrix
+  const pmNbaFooter = (() => {
+    const hasGapDown = effectiveGap !== null && effectiveGap < -1;
+    const hasGapUp = effectiveGap !== null && effectiveGap > 1;
+    const strongGapUp = effectiveGap !== null && effectiveGap > 3;
+    const pmHigh = effectivePmVol !== null && effectivePmVol > 5;
+    const pmMed = effectivePmVol !== null && effectivePmVol >= 2 && effectivePmVol <= 5;
+    const pmLow = effectivePmVol !== null && effectivePmVol >= 1 && effectivePmVol < 2;
+    const gapStr = effectiveGap != null ? `${effectiveGap > 0 ? "+" : ""}${effectiveGap.toFixed(1)}%` : null;
+    const volStr = effectivePmVol != null ? `${effectivePmVol.toFixed(1)}×` : null;
+    const ema8Str = ema8 && ema8 > 0 ? `$${ema8.toFixed(2)}` : "the 8-day average";
+
+    // Gap-down warning — always shown regardless of tier
+    if (hasGapDown) return `Gap-down ${gapStr} — wait for price to stabilize before entering`;
+
+    if (tier === "HIGH_CONVICTION" || tier === "TACTICAL_BUY") {
+      if (pmHigh) return `Pre-market: ${volStr} volume — wait for 9:45 AM candle, enter only if price holds`;
+      if (pmMed && hasGapUp) return `Pre-market confirms: ${volStr} vol + ${gapStr} gap-up — execute full position`;
+      if (pmMed) return `Pre-market confirms: ${volStr} volume — execute full position`;
+      if (pmLow) return `Above-avg pre-market interest — start half position, add if volume builds`;
+      if (strongGapUp) return `Strong ${gapStr} gap-up — wait for 9:45 AM candle, enter if price holds`;
+      if (hasGapUp) return `${gapStr} gap-up adds direction — confirms setup`;
+    }
+    if (tier === "WATCH_EXTENDED") {
+      if ((effectivePmVol !== null && effectivePmVol > 2) || (effectiveGap !== null && effectiveGap > 2))
+        return `Pre-market volume on an overheated stock — gap-and-fade risk. Stick to plan: wait for pullback to ${ema8Str}`;
+    }
+    if (tier === "OBSERVE" || nbaDirective === "WATCH" || nbaDirective === "OBSERVE_WARN") {
+      if (pmHigh) return `Unusual pre-market activity — monitor today's open for a setup trigger`;
+      if (pmMed) return `Pre-market interest building — watch for breakout confirmation today`;
+      if (effectiveGap !== null && effectiveGap > 2) return `Gap-up today — check if setup conditions improve at the open`;
+    }
+    if (tier === "BREAKOUT_WATCH") {
+      if (effectivePmVol !== null && effectivePmVol > 2)
+        return `Pre-market volume building — watch today's open for a blue sky breakout trigger`;
+    }
+    return null;
+  })();
+
   const legacyBadge = signalBadge(strength);
   const tBadge = tierBadge(tier);
   const badge = tBadge ?? legacyBadge;
@@ -635,6 +678,16 @@ export default function SignalCard({
           </div>
         )}
 
+        {/* ── Pre-market NBA footer (always visible, amber) ── */}
+        {pmNbaFooter && (
+          <div
+            className="px-5 py-2 text-[11px] font-medium border-t border-[#3c4a40]/15"
+            style={{ backgroundColor: "rgba(255, 179, 60, 0.05)", color: "#ffb33c" }}
+          >
+            ◆ {pmNbaFooter}
+          </div>
+        )}
+
         {/* ── Expanded detail panel ── */}
         {expanded && (
           <div
@@ -741,35 +794,46 @@ export default function SignalCard({
             )}
 
             {/* UX-03: Pre-Market Interpretation Labels */}
-            {(gapPctLive != null || pmVolRatioLive != null) && (
+            {effectiveGap == null && effectivePmVol == null && (
+              <div className="mb-3 rounded-lg bg-[#0e141a] px-3 py-2">
+                <span className="text-[9px] text-[#bacbbd]/35">Pre-market data — updates 9:15 AM ET</span>
+              </div>
+            )}
+            {(effectiveGap != null || effectivePmVol != null) && (
               <div className="grid grid-cols-2 gap-2 mb-3">
-                {gapPctLive != null && (
+                {effectiveGap != null && (
                   <MetricTile
                     label="Gap Live"
                     tip="Pre-market price gap vs. yesterday's close. >2% gap-up = institutional overnight buying. Negative = gap-down, potential weakness."
                     activeTip={activeTip}
                     setActiveTip={setActiveTip}
                   >
-                    <p className={`font-bold text-sm ${gapPctLive > 2 ? "text-[#43ed9e]" : gapPctLive < -2 ? "text-[#ffb3ae]" : "text-[#dde3ec]"}`}>
-                      {gapPctLive > 0 ? "+" : ""}{gapPctLive.toFixed(1)}%
+                    <p className={`font-bold text-sm ${effectiveGap > 2 ? "text-[#43ed9e]" : effectiveGap < -2 ? "text-[#ffb3ae]" : "text-[#dde3ec]"}`}>
+                      {effectiveGap > 0 ? "+" : ""}{effectiveGap.toFixed(1)}%
                     </p>
                     <p className="text-[9px] text-[#bacbbd]/45 mt-0.5">
-                      {gapPctLive > 3 ? "Strong gap-up" : gapPctLive > 1 ? "Mild gap-up" : gapPctLive < -3 ? "Strong gap-down" : gapPctLive < -1 ? "Mild gap-down" : "Flat open"}
+                      {effectiveGap > 3 ? "Strong gap-up" : effectiveGap > 1 ? "Mild gap-up" : effectiveGap < -3 ? "Strong gap-down" : effectiveGap < -1 ? "Mild gap-down" : "Flat open"}
+                    </p>
+                    <p className="text-[9px] text-[#ffb33c]/60 mt-0.5">
+                      {effectiveGap > 3 ? "Wait for 9:45 AM — enter if holds" : effectiveGap > 1 ? "Adds directional edge" : effectiveGap < -3 ? "Avoid entry — selling pressure" : effectiveGap < -1 ? "Wait for stabilization" : ""}
                     </p>
                   </MetricTile>
                 )}
-                {pmVolRatioLive != null && (
+                {effectivePmVol != null && (
                   <MetricTile
                     label="Pre-mkt Vol"
                     tip="Pre-market volume vs. daily average. >2× = institutional positioning before the open — the signal most novice traders miss."
                     activeTip={activeTip}
                     setActiveTip={setActiveTip}
                   >
-                    <p className={`font-bold text-sm ${pmVolRatioLive > 2 ? "text-[#43ed9e]" : pmVolRatioLive > 1 ? "text-[#dde3ec]" : "text-[#bacbbd]/60"}`}>
-                      {pmVolRatioLive.toFixed(1)}×
+                    <p className={`font-bold text-sm ${effectivePmVol > 2 ? "text-[#43ed9e]" : effectivePmVol > 1 ? "text-[#dde3ec]" : "text-[#bacbbd]/60"}`}>
+                      {effectivePmVol.toFixed(1)}×
                     </p>
                     <p className="text-[9px] text-[#bacbbd]/45 mt-0.5">
-                      {pmVolRatioLive > 5 ? "Unusual — high alert" : pmVolRatioLive > 2 ? "Institutional interest" : pmVolRatioLive > 1 ? "Above avg" : "Light activity"}
+                      {effectivePmVol > 5 ? "Unusual activity" : effectivePmVol > 2 ? "Institutional interest" : effectivePmVol > 1 ? "Above avg" : "Light activity"}
+                    </p>
+                    <p className="text-[9px] text-[#ffb33c]/60 mt-0.5">
+                      {effectivePmVol > 5 ? "Wait for 9:45 AM candle" : effectivePmVol > 2 ? "Execute full position" : effectivePmVol > 1 ? "Start half position" : ""}
                     </p>
                   </MetricTile>
                 )}
