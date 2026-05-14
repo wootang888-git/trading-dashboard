@@ -304,7 +304,8 @@ export default function SignalCard({
   const earningsWarning = sa?.earningsDays !== null && sa?.earningsDays !== undefined && sa.earningsDays <= 14;
 
   // Frontend guard: treat near-zero as absent (sentinel written by pulse_premarket when pm_volume == 0)
-  const effectiveGap = gapPctLive != null && Math.abs(gapPctLive) > 0.001 ? gapPctLive : null;
+  // gap_pct_live is stored as a decimal fraction (0.022 = 2.2%) — multiply by 100 for display + comparison
+  const effectiveGap = gapPctLive != null && Math.abs(gapPctLive) > 0.001 ? gapPctLive * 100 : null;
   const effectivePmVol = pmVolRatioLive != null && pmVolRatioLive > 0.01 ? pmVolRatioLive : null;
 
   // NBA second footer — pre-market edge surfaced always-visible per tier × signal matrix
@@ -832,9 +833,12 @@ export default function SignalCard({
                     <p className="text-[9px] text-[#bacbbd]/45 mt-0.5">
                       {effectivePmVol > 5 ? "Unusual activity" : effectivePmVol > 2 ? "Institutional interest" : effectivePmVol > 1 ? "Above avg" : "Light activity"}
                     </p>
-                    <p className="text-[9px] text-[#ffb33c]/60 mt-0.5">
-                      {effectivePmVol > 5 ? "Wait for 9:45 AM candle" : effectivePmVol > 2 ? "Execute full position" : effectivePmVol > 1 ? "Start half position" : ""}
-                    </p>
+                    {/* Suppress action when gap-down footer already warns against entry */}
+                    {!(effectiveGap !== null && effectiveGap < -1) && (
+                      <p className="text-[9px] text-[#ffb33c]/60 mt-0.5">
+                        {effectivePmVol > 5 ? "Wait for 9:45 AM candle" : effectivePmVol > 2 ? "Execute full position" : effectivePmVol > 1 ? "Start half position" : ""}
+                      </p>
+                    )}
                   </MetricTile>
                 )}
               </div>
