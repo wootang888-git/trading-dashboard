@@ -11,10 +11,11 @@ function _today(): string {
   return new Date().toISOString().split("T")[0];
 }
 
-type TriggerType = "SCALE_IN" | "EXIT" | "RSI" | "EMA_TOUCH" | "VOL_SPIKE" | "MACD" | "BB_SQUEEZE";
+type TriggerType = "SCALE_IN" | "EXIT" | "HARVEST" | "RSI" | "EMA_TOUCH" | "VOL_SPIKE" | "MACD" | "BB_SQUEEZE" | "STOP_NEAR";
 
 interface FiredTrigger {
   ticker: string;
+  name: string;
   triggerType: TriggerType;
   detail: string;
 }
@@ -51,7 +52,7 @@ export async function POST(req: NextRequest) {
   const allFired: FiredTrigger[] = [];
 
   await Promise.all(
-    watchlist.map(async ({ ticker, strategy }) => {
+    watchlist.map(async ({ ticker, name, strategy }) => {
       const [quote, bars] = await Promise.all([getQuote(ticker), getHistorical(ticker, 90)]);
       if (!quote || bars.length === 0) return;
 
@@ -123,9 +124,20 @@ export async function POST(req: NextRequest) {
         candidates.push({ type: "BB_SQUEEZE", detail: "BB squeeze (coiling)" });
       }
 
+      // Trigger 8 — HARVEST (take partial profits)
+      if (nbaDirective === "HARVEST") {
+        candidates.push({ type: "HARVEST", detail: `Conv ${signal.convictionScore} — take partial profits` });
+      }
+
+      // Trigger 9 — Stop approach (within 3% of stop)
+      const riskToStop = signal.stopPrice > 0 ? (livePrice - signal.stopPrice) / livePrice : -1;
+      if (riskToStop > 0 && riskToStop <= 0.03) {
+        candidates.push({ type: "STOP_NEAR", detail: `Within ${(riskToStop * 100).toFixed(1)}% of stop ($${signal.stopPrice.toFixed(2)})` });
+      }
+
       for (const c of candidates) {
         if (!alreadySent.has(`${ticker}:${c.type}`)) {
-          allFired.push({ ticker, triggerType: c.type, detail: c.detail });
+          allFired.push({ ticker, name, triggerType: c.type, detail: c.detail });
         }
       }
     })
@@ -139,19 +151,29 @@ export async function POST(req: NextRequest) {
   const dateStr = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   const lines: string[] = [`📈 <b>SwingAI — ${dateStr}</b>`, ""];
 
+  const HIGH_PRIORITY = ["SCALE_IN", "EXIT", "HARVEST"];
   const scaleIns = allFired.filter((f) => f.triggerType === "SCALE_IN");
+  const harvests = allFired.filter((f) => f.triggerType === "HARVEST");
   const exits = allFired.filter((f) => f.triggerType === "EXIT");
-  const watchSignals = allFired.filter((f) => !["SCALE_IN", "EXIT"].includes(f.triggerType));
+  const watchSignals = allFired.filter((f) => !HIGH_PRIORITY.includes(f.triggerType));
+
+  const tickerLabel = (f: FiredTrigger) => `${f.ticker} (${f.name})`;
 
   if (scaleIns.length > 0) {
     lines.push("🟢 <b>SCALE IN</b>");
-    for (const f of scaleIns) lines.push(`  ${f.ticker} · ${f.detail}`);
+    for (const f of scaleIns) lines.push(`  ${tickerLabel(f)} · ${f.detail}`);
+    lines.push("");
+  }
+
+  if (harvests.length > 0) {
+    lines.push("🟡 <b>HARVEST</b>");
+    for (const f of harvests) lines.push(`  ${tickerLabel(f)} · ${f.detail}`);
     lines.push("");
   }
 
   if (exits.length > 0) {
     lines.push("🔴 <b>EXIT</b>");
-    for (const f of exits) lines.push(`  ${f.ticker} · ${f.detail}`);
+    for (const f of exits) lines.push(`  ${tickerLabel(f)} · ${f.detail}`);
     lines.push("");
   }
 
@@ -164,7 +186,7 @@ export async function POST(req: NextRequest) {
     }
     const TYPE_LABEL: Record<string, string> = {
       RSI: "RSI extreme", EMA_TOUCH: "EMA touch", VOL_SPIKE: "Vol spike",
-      MACD: "MACD accel", BB_SQUEEZE: "BB squeeze",
+      MACD: "MACD accel", BB_SQUEEZE: "BB squeeze", STOP_NEAR: "Stop approach",
     };
     lines.push("📊 <b>Watch signals</b>");
     for (const [type, tickers] of Object.entries(byType)) {
