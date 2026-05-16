@@ -193,3 +193,21 @@ Before acting on any external audit, grep for the claimed functions/patterns and
 
 ### Preventing documentation drift
 Update CLAUDE.md in the same commit as any refactor that changes a key mechanism. Use `/learn` after any session that changes architecture. If CLAUDE.md and live code conflict, **trust the code**.
+
+### Gate boundary collisions — always make thresholds mutually exclusive
+When two gates share a threshold (e.g., `< 80` for OBSERVE and `>= 80` for earningsRisk), use strict inequality on one side (`<= 80` / `> 80`) so the boundary value hits exactly one gate. `>= N` and `< N` are exclusive; `>= N` and `<= N` overlap at N and produce contradictions (2026-05: conviction=80 card showed SCALE_IN badge + "don't enter" footer simultaneously).
+
+### computeNbaDirective doesn't inherit signal-level gate state
+`buildSignal()` can change the tier (e.g., force OBSERVE via earnings gate), but `computeNbaDirective()` doesn't see the underlying reason — it only receives the final tier. If a secondary gate (e.g., earningsRisk) should suppress a directive (e.g., SCALE_IN), it must be passed explicitly as a parameter. Omitting this causes contradictions: an OBSERVE-tier card can still receive a SCALE_IN directive via the streak rule (2026-05 audit finding #3).
+
+### Footer contradictions — suppress tier footer when a risk override applies
+The tier footer ("Enter full position — all quality checks passed") fires for HIGH_CONVICTION regardless of overlaid risk flags. Any risk flag that means "don't enter" must suppress `footerText` (return null) and own the footer slot itself. Otherwise the card shows two directly contradictory instructions (2026-05: earningsRisk=true card showed "Enter full position" + "don't enter" in adjacent footers).
+
+### Dev fixture page for hard-to-reproduce UI states
+When a feature requires live data conditions that rarely occur (e.g., ticker with earnings in 3 days AND conviction > 80), create `app/test/page.tsx` with hardcoded `SignalCard` props covering each state variant. Do NOT commit this file — leave it untracked. Run `npx tsc --noEmit` to verify props match the interface. Delete before release.
+
+### Weekly indicator history requirements
+Any indicator requiring N weeks of data needs at least N×7 calendar days of bars fetched. 30-week EMA requires ~210 calendar days minimum — use 365 days for a safe margin. Defaulting to `true` (not `false`) on insufficient history avoids false negatives (2026-05: `computeWeeklyTrend` returns `{ weeklyStage2: true }` when bars < 70 — no tickers blocked incorrectly).
+
+### Pill cluster clutter — action-critical warnings belong in the footer
+The card header pill cluster (ML%, tier badge, streak chips) gets unreadable beyond 3–4 pills. Action-critical messages ("don't enter", binary risk) belong in the always-visible footer slot as tappable elements, not as additional pills. Reserve header pills for classification labels (ML score, tier, streak). Tappable footers can expand inline tooltips without requiring modal overhead (2026-05: earnings risk pill moved from header to tappable footer).
