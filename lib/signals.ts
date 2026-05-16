@@ -47,6 +47,11 @@ export interface Indicators {
   // Phase 2: Per-stock RSI percentile (0–1) over trailing 126-bar window.
   // -1 = insufficient history; fall back to universal threshold in gate logic.
   rsiPercentile: number;
+  // Weekly trend (Weinstein Stage 2): requires 365-day fetch window.
+  // Defaults to true when insufficient weekly bars — never generates false negatives on short history.
+  weeklyAbove10EMA: boolean;
+  weeklyAbove30EMA: boolean;
+  weeklyStage2: boolean; // price > 10-week EMA > 30-week EMA = Stage 2 uptrend
 }
 
 export interface Condition {
@@ -109,6 +114,7 @@ export interface Signal {
   rrAchievable: number;          // (structuralTarget − entryPrice) / risk; 3.0 in trail mode
   trailMode: boolean;            // true when price ≥ 52w high — show trailing stop instead of fixed target
   regime: MarketRegime;          // ADX-based market regime
+  earningsRisk: boolean;         // true when conviction ≥80 but earnings within T-5 to T+1 (binary event warning)
 }
 
 // ─── Indicator helpers ───────────────────────────────────────────────────────
@@ -386,6 +392,52 @@ function calcRelativeStrength(bars: HistoricalBar[], spyBars: HistoricalBar[]): 
   return { rsVsSpy: stockReturn - spyReturn, rsRising, rsMakingNewHigh };
 }
 
+/** Weekly trend filter — Weinstein Stage 2 alignment.
+ *  Resamples daily bars to weekly (last close per Mon-Sun week) and checks:
+ *  - price > 10-week EMA (Stage 2 entry)
+ *  - price > 30-week EMA AND 10-week EMA > 30-week EMA (Stage 2 confirmation)
+ *  Defaults to true on insufficient history so short windows never generate false negatives. */
+function computeWeeklyTrend(bars: HistoricalBar[]): {
+  weeklyAbove10EMA: boolean;
+  weeklyAbove30EMA: boolean;
+  weeklyStage2: boolean;
+} {
+  const safe = { weeklyAbove10EMA: true, weeklyAbove30EMA: true, weeklyStage2: true };
+  if (bars.length < 70) return safe; // need at least ~14 weeks of daily bars
+
+  // Resample: group by ISO week (Mon-Sun), keep last bar's close per week
+  const weekMap = new Map<string, number>();
+  for (const bar of bars) {
+    const d = new Date(bar.date);
+    const day = d.getUTCDay(); // 0=Sun
+    const monday = new Date(d);
+    monday.setUTCDate(d.getUTCDate() - (day === 0 ? 6 : day - 1));
+    weekMap.set(monday.toISOString().slice(0, 10), bar.close);
+  }
+  const weeklyCloses = Array.from(weekMap.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([, close]) => close);
+
+  if (weeklyCloses.length < 10) return safe;
+
+  // Build synthetic HistoricalBar array for EMA helpers (only close needed)
+  const toWeeklyBars = (closes: number[]): HistoricalBar[] =>
+    closes.map((close) => ({ date: new Date(), open: close, high: close, low: close, close, volume: 0 }));
+
+  const weekly10EMA = calcEMA(toWeeklyBars(weeklyCloses), 10);
+  const latestClose = weeklyCloses[weeklyCloses.length - 1];
+  const weeklyAbove10EMA = latestClose > weekly10EMA;
+
+  if (weeklyCloses.length < 30) {
+    return { weeklyAbove10EMA, weeklyAbove30EMA: true, weeklyStage2: weeklyAbove10EMA };
+  }
+
+  const weekly30EMA = calcEMA(toWeeklyBars(weeklyCloses), 30);
+  const weeklyAbove30EMA = latestClose > weekly30EMA;
+  const weeklyStage2 = weeklyAbove10EMA && weeklyAbove30EMA && weekly10EMA > weekly30EMA;
+  return { weeklyAbove10EMA, weeklyAbove30EMA, weeklyStage2 };
+}
+
 // ─── computeIndicators ───────────────────────────────────────────────────────
 
 export function computeIndicators(
@@ -408,6 +460,7 @@ export function computeIndicators(
     macdAccel2d: false, rsiCross62: false,
     bbUpper: 0, bbLower: 0, bbWidth: 0, bbPct: 0.5,
     rsiPercentile: -1,
+    weeklyAbove10EMA: true, weeklyAbove30EMA: true, weeklyStage2: true,
   };
   if (bars.length === 0) return zero;
 
@@ -516,6 +569,8 @@ export function computeIndicators(
     rsiPercentile = computeRsiPercentile(rsiHistory.slice(0, -1), rsi14);
   }
 
+  const { weeklyAbove10EMA, weeklyAbove30EMA, weeklyStage2 } = computeWeeklyTrend(bars);
+
   return {
     rsi14, ma20, ma50, ema8, ema20,
     ema50, emaFanOpen, emaGapWidening,
@@ -533,6 +588,7 @@ export function computeIndicators(
     atr14, macd, macdSignal, macdHist,
     bbUpper, bbLower, bbWidth, bbPct,
     rsiPercentile,
+    weeklyAbove10EMA, weeklyAbove30EMA, weeklyStage2,
   };
 }
 
@@ -1123,7 +1179,8 @@ function assignTier(
   rsVsSpyNegativeStreak: number,
   regime: MarketRegime = "choppy",
   rrAchievable: number = 3.0,
-  isNear52wHigh: boolean = false
+  isNear52wHigh: boolean = false,
+  weeklyStage2: boolean = true
 ): SignalTier {
   // 1. EXIT
   if (latestClose < ema8 && rsVsSpyNegativeStreak >= 3) return "EXIT";
@@ -1156,8 +1213,10 @@ function assignTier(
   const highConvThreshold = regime === "bear" ? 90 : regime === "choppy" ? 75 : 82;
   // Bear regime also requires stronger R:R
   const bearRRFailed = regime === "bear" && rrAchievable < 3.0;
+  // Weekly Stage 2 gate: daily signal in a weekly downtrend cannot be HIGH_CONVICTION
+  const weeklyTrendBlocked = !weeklyStage2;
   // 4. HIGH_CONVICTION
-  if (convictionScore > highConvThreshold && !anyHardGateFailed && !bearRRFailed) return "HIGH_CONVICTION";
+  if (convictionScore > highConvThreshold && !anyHardGateFailed && !bearRRFailed && !weeklyTrendBlocked) return "HIGH_CONVICTION";
   // 5. TACTICAL_BUY — conviction in healthy zone or gates block HIGH_CONVICTION
   const tacticalMin = regime === "bear" ? 82 : 70;
   if (convictionScore >= tacticalMin && convictionScore <= highConvThreshold) return "TACTICAL_BUY";
@@ -1192,6 +1251,7 @@ export function computeNbaDirective({
   ema8,
   structuralTarget,
   trailMode,
+  earningsRisk,
 }: {
   mlScorePct: number | null;
   mlPercentileRank: number | null;
@@ -1205,6 +1265,7 @@ export function computeNbaDirective({
   ema8: number;
   structuralTarget?: number;
   trailMode?: boolean;
+  earningsRisk?: boolean;
 }): { directive: NbaDirective; reason: string } {
   // EXIT always takes priority
   if (tier === "EXIT") {
@@ -1266,8 +1327,14 @@ export function computeNbaDirective({
     return { directive: "HOLD_TRAIL", reason: "Price above 8-EMA — trail stop up, no new buying" };
   }
 
-  // 3-day streak promotion: WATCH → SCALE_IN
-  if (directive === "WATCH" && streakDays >= 3) {
+  // Earnings window gate: downgrade SCALE_IN → WATCH (binary event risk; stop cannot protect against gaps)
+  if (earningsRisk && directive === "SCALE_IN") {
+    directive = "WATCH";
+    reason = "Earnings window — wait for announcement before scaling in";
+  }
+
+  // 3-day streak promotion: WATCH → SCALE_IN (skip during earnings window)
+  if (directive === "WATCH" && streakDays >= 3 && !earningsRisk) {
     return {
       directive: "SCALE_IN",
       reason: `Conviction sustained ${streakDays} consecutive days — elevated follow-through probability`,
@@ -1287,7 +1354,8 @@ export function buildSignal(
   spyBars: HistoricalBar[] = [],
   sectorBars: HistoricalBar[] = [],
   sectorEtfAboveMA20: boolean = true,
-  pmVolRatioLive: number | null = null
+  pmVolRatioLive: number | null = null,
+  earningsTimestamp: Date | null = null
 ): Signal {
   const ind = computeIndicators(bars, high52w, spyBars, ticker);
 
@@ -1330,10 +1398,23 @@ export function buildSignal(
     : 0;
   const rawTier = assignTier(
     convictionScore, hardGates, latestClose, ind.ema8,
-    rsVsSpyNegativeStreak, regime, rrAchievable, ind.isNear52wHigh
+    rsVsSpyNegativeStreak, regime, rrAchievable, ind.isNear52wHigh, ind.weeklyStage2
   );
-  // Trail stop breach → EXIT immediately (bypasses the slow SPY-streak EXIT gate)
-  const tier: SignalTier = (trailMode && latestClose < structuralTarget) ? "EXIT" : rawTier;
+
+  // Earnings window gate: T-5 to T+1 (5 days before through 1 day after)
+  const daysToEarnings = earningsTimestamp
+    ? Math.ceil((earningsTimestamp.getTime() - Date.now()) / 86400000)
+    : null;
+  const inEarningsWindow = daysToEarnings !== null && daysToEarnings >= -1 && daysToEarnings <= 5;
+  // Low-conviction tickers near a binary event route to OBSERVE; high-conviction get a warning flag.
+  // Boundary: > 80 (not >= 80) keeps gates mutually exclusive — conviction exactly 80 hits OBSERVE.
+  const earningsRisk = inEarningsWindow && convictionScore > 80;
+
+  // Trail stop breach → EXIT; earnings window (conviction ≤80) → OBSERVE
+  const tier: SignalTier =
+    (trailMode && latestClose < structuralTarget) ? "EXIT"
+    : (inEarningsWindow && convictionScore <= 80) ? "OBSERVE"
+    : rawTier;
 
   return {
     ticker, score, strength, strategy, indicators: ind,
@@ -1350,5 +1431,6 @@ export function buildSignal(
     rrAchievable,
     trailMode,
     regime,
+    earningsRisk,
   };
 }

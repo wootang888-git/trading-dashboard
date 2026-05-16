@@ -60,7 +60,7 @@ export async function GET() {
     watchlist.map(async ({ ticker, strategy }) => {
       const [quote, bars, news, finnhub] = await Promise.all([
         getQuote(ticker),
-        getHistorical(ticker, 90),
+        getHistorical(ticker, 365),
         getNews(ticker),
         getFinnhubData(ticker),
       ]);
@@ -69,7 +69,7 @@ export async function GET() {
       const sectorBars = sectorEtf ? (sectorBarMap[sectorEtf] ?? []) : [];
       const sectorEtfAboveMA20 = sectorEtf ? (sectorEtfAboveMA20Map[sectorEtf] ?? true) : true;
       const mlData = mlScores[ticker];
-      const signal = buildSignal(ticker, strategy, bars, quote.high52w, spyBars, sectorBars, sectorEtfAboveMA20, mlData?.pm_vol_ratio_live ?? null);
+      const signal = buildSignal(ticker, strategy, bars, quote.high52w, spyBars, sectorBars, sectorEtfAboveMA20, mlData?.pm_vol_ratio_live ?? null, quote.earningsTimestamp);
 
       const earningsDays = quote.earningsTimestamp
         ? Math.ceil((quote.earningsTimestamp.getTime() - Date.now()) / 86400000)
@@ -90,6 +90,7 @@ export async function GET() {
         ema8: signal.indicators.ema8,
         structuralTarget: signal.structuralTarget,
         trailMode: signal.trailMode,
+        earningsRisk: signal.earningsRisk,
       });
       return {
         ...signal,

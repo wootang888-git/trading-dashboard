@@ -57,6 +57,7 @@ interface SignalData {
     bbLower: number;
     bbWidth: number;
     bbPct: number;
+    weeklyStage2?: boolean;
   };
   entryNote: string;
   stopNote: string;
@@ -106,6 +107,8 @@ interface SignalData {
   rrAchievable?: number;
   trailMode?: boolean;
   regime?: "bull" | "bear" | "choppy";
+  // Feature flags
+  earningsRisk?: boolean;       // conviction ≥80 but earnings within T-5 to T+1
 }
 
 interface DashboardData {

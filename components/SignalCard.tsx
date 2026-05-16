@@ -93,6 +93,9 @@ interface SignalCardProps {
   openTradeCount?: number;
   openTradeId?: string;        // populated only when openTradeCount === 1
   onTradeLogged?: () => void;
+  // Feature signals
+  earningsRisk?: boolean;      // high conviction but earnings within T-5 to T+1
+  weeklyStage2?: boolean;      // false = weekly downtrend (Weinstein Stage 3/4)
 }
 
 // Metric tile — hover on desktop, tap on mobile. Only one tooltip open at a time.
@@ -224,6 +227,7 @@ export default function SignalCard({
   nbaDirective, nbaDirectiveReason,
   structuralTarget, rrAchievable, trailMode, regime,
   inPosition, openTradeCount = 0, openTradeId, onTradeLogged,
+  earningsRisk, weeklyStage2,
 }: SignalCardProps) {
   const [modalOpen, setModalOpen] = useState(false);
   const [faqOpen, setFaqOpen] = useState(false);
@@ -232,6 +236,7 @@ export default function SignalCard({
   const [expanded, setExpanded] = useState(false);
   const [showValidation, setShowValidation] = useState(false);
   const [activeTip, setActiveTip] = useState<string | null>(null);
+  const [showEarningsTip, setShowEarningsTip] = useState(false);
 
   // Phase 3: close-position state (for Mark Closed button)
   const [closeLoading, setCloseLoading] = useState(false);
@@ -302,6 +307,11 @@ export default function SignalCard({
   const techPts = Math.max(0, Math.min(40, convictionScore - rrPts - sectorPts - qualityPts));
   const displayRR = rrAchievable ?? (risk && entryPrice && targetPrice ? (targetPrice - entryPrice) / risk : null);
   const earningsWarning = sa?.earningsDays !== null && sa?.earningsDays !== undefined && sa.earningsDays <= 14;
+  const earningsLabel = sa?.earningsDays === 0
+    ? "Earnings today"
+    : sa?.earningsDays != null
+    ? `Earnings in ${sa.earningsDays}d`
+    : "Earnings just passed";
 
   // Frontend guard: treat near-zero as absent (sentinel written by pulse_premarket when pm_volume == 0)
   // gap_pct_live is stored as a decimal fraction (0.022 = 2.2%) — multiply by 100 for display + comparison
@@ -388,8 +398,9 @@ export default function SignalCard({
     }
   };
 
-  // Footer guidance per tier — OBSERVE gets no footer
+  // Footer guidance per tier — OBSERVE gets no footer; earnings risk suppresses tier footer
   const footerText = (() => {
+    if (earningsRisk) return null; // earnings footer handles messaging; prevents "Enter full position" contradiction
     switch (tier) {
       case "HIGH_CONVICTION":
         return "Enter full position — all quality checks passed.";
@@ -545,6 +556,11 @@ export default function SignalCard({
                   ⚠ {sa!.earningsDays === 0 ? "Earnings today" : `Earnings ${sa!.earningsDays}d`}
                 </span>
               )}
+              {weeklyStage2 === false && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#252b31] text-[#8a9a8d] border border-[#3c4a40]/40">
+                  Weekly downtrend
+                </span>
+              )}
               {mlScore != null && (
                 <span
                   suppressHydrationWarning
@@ -687,6 +703,29 @@ export default function SignalCard({
           >
             ◆ {pmNbaFooter}
           </div>
+        )}
+
+        {/* ── Earnings risk footer — tappable; expands "why" explanation ── */}
+        {earningsRisk && (
+          <>
+            <button
+              className="w-full text-left px-5 py-2 text-[11px] font-medium border-t border-red-900/20 flex items-center justify-between"
+              style={{ backgroundColor: "rgba(200, 50, 40, 0.06)", color: "#ffb3ae" }}
+              onClick={(e) => { e.stopPropagation(); setShowEarningsTip((v) => !v); }}
+            >
+              <span>⚠ {earningsLabel} — don&apos;t enter · tap to learn why</span>
+              <span className="text-[9px] opacity-50">{showEarningsTip ? "↑" : "↓"}</span>
+            </button>
+            {showEarningsTip && (
+              <div
+                className="px-5 py-3 text-[11px] leading-relaxed border-t border-red-900/20"
+                style={{ backgroundColor: "rgba(200, 50, 40, 0.08)", color: "#fca5a5" }}
+              >
+                <span className="font-semibold text-red-300 block mb-1">⚡ Why is this signal paused?</span>
+                One report can move this stock 10–20% overnight — no way to predict which direction. Signal resumes after the announcement.
+              </div>
+            )}
+          </>
         )}
 
         {/* ── Expanded detail panel ── */}
